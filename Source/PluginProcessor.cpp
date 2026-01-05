@@ -132,17 +132,19 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
     dsp.p_sat_mode = (int)*apvts.getRawParameterValue("sat_mode");
     dsp.p_sat_drive = *apvts.getRawParameterValue("sat_drive");
-    dsp.p_sat_autogain = (int)*apvts.getRawParameterValue("sat_autogain"); // NEW
     dsp.p_sat_trim = *apvts.getRawParameterValue("sat_trim");
     dsp.p_sat_tone = *apvts.getRawParameterValue("sat_tone");
     dsp.p_sat_tone_freq = *apvts.getRawParameterValue("sat_tone_freq");
     dsp.p_sat_mix = *apvts.getRawParameterValue("sat_mix");
+    dsp.p_sat_autogain_mode = (int)*apvts.getRawParameterValue("sat_autogain");
 
     dsp.p_harm_bright = *apvts.getRawParameterValue("harm_bright");
     dsp.p_harm_freq = *apvts.getRawParameterValue("harm_freq");
 
     dsp.p_makeup = *apvts.getRawParameterValue("makeup");
     dsp.p_dry_wet = *apvts.getRawParameterValue("dry_wet");
+
+    // NEW
     dsp.p_out_trim = *apvts.getRawParameterValue("out_trim");
 
     dsp.updateParameters();
@@ -151,7 +153,7 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     float inL = (numCh > 0) ? buffer.getMagnitude(0, 0, numSamples) : 0.0f;
     float inR = (numCh > 1) ? buffer.getMagnitude(1, 0, numSamples) : inL;
 
-    // 3. PROCESS
+    // 3. PROCESS (MONO SAFE NOW)
     dsp.process(buffer);
 
     // 4. MEASURE OUTPUT
@@ -230,11 +232,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UltimateCompAudioProcessor::
 
     layout.add(std::make_unique<juce::AudioParameterChoice>("sat_mode", "Transformer", juce::StringArray{ "Clean", "Iron", "Steel" }, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>("sat_drive", "Sat Drive", 0.0f, 24.0f, 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterBool>("sat_autogain", "Sat Auto Gain", false)); // NEW
     layout.add(std::make_unique<juce::AudioParameterFloat>("sat_trim", "Sat Trim", -24.0f, 0.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("sat_tone", "Sat Tone", -12.0f, 12.0f, 3.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("sat_tone_freq", "Sat Tone Freq", 1000.0f, 12000.0f, 5500.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("sat_mix", "Sat Mix %", 0.0f, 100.0f, 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterChoice>("sat_autogain", "Sat Auto-Gain", juce::StringArray{ "Off", "Partial", "Full" }, 1));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>("harm_bright", "Harm Bright", -12.0f, 12.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("harm_freq", "Harm Freq", 1000.0f, 12000.0f, 4500.0f));
@@ -242,8 +244,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout UltimateCompAudioProcessor::
     layout.add(std::make_unique<juce::AudioParameterFloat>("makeup", "Makeup Gain", 0.0f, 24.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("dry_wet", "Dry/Wet %", 0.0f, 100.0f, 100.0f));
 
-    // UPDATED: Output Trim -24 to +24
-    layout.add(std::make_unique<juce::AudioParameterFloat>("out_trim", "Output", -24.0f, 24.0f, 0.0f));
+    // NEW: post-mix output trim
+    layout.add(std::make_unique<juce::AudioParameterFloat>("out_trim", "Output Trim", -24.0f, 24.0f, 0.0f));
 
     return layout;
 }

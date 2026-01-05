@@ -12,11 +12,10 @@
 #include <cmath>
 #include <algorithm>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
 struct SimpleBiquad {
+    // Modern constant replacement for M_PI
+    static constexpr double PI_CONST = 3.14159265358979323846;
+
     // Coefficients
     double b0 = 0.0, b1 = 0.0, b2 = 0.0;
     double a1 = 0.0, a2 = 0.0;
@@ -52,7 +51,7 @@ struct SimpleBiquad {
         if (sr <= 0.0) return;
 
         double A = std::pow(10.0, gain_db / 40.0);
-        double w0 = 2.0 * M_PI * freq / sr;
+        double w0 = 2.0 * PI_CONST * freq / sr;
         double cos_w0 = std::cos(w0);
         double sin_w0 = std::sin(w0);
         // alpha = sin(w0)/2 * sqrt( (A + 1/A)*(1/Q - 1) + 2 )
@@ -78,7 +77,7 @@ struct SimpleBiquad {
         if (sr <= 0.0) return;
 
         double A = std::pow(10.0, gain_db / 40.0);
-        double w0 = 2.0 * M_PI * freq / sr;
+        double w0 = 2.0 * PI_CONST * freq / sr;
         double cos_w0 = std::cos(w0);
         double alpha = std::sin(w0) / (2.0 * Q);
 
@@ -101,7 +100,7 @@ struct SimpleBiquad {
     void update_hpf(double freq, double Q, double sr) {
         if (sr <= 0.0) return;
 
-        double w0 = 2.0 * M_PI * freq / sr;
+        double w0 = 2.0 * PI_CONST * freq / sr;
         double cos_w0 = std::cos(w0);
         double alpha = std::sin(w0) / (2.0 * Q);
 
@@ -124,7 +123,7 @@ struct SimpleBiquad {
     void update_lpf(double freq, double Q, double sr) {
         if (sr <= 0.0) return;
 
-        double w0 = 2.0 * M_PI * freq / sr;
+        double w0 = 2.0 * PI_CONST * freq / sr;
         double cos_w0 = std::cos(w0);
         double alpha = std::sin(w0) / (2.0 * Q);
 

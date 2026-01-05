@@ -3,8 +3,7 @@
     PluginEditor.cpp
     Theme: "Cyber Schematic"
     Changes:
-    - FIXED: Uniform Knob Sizes (64x74 scaled)
-    - FIXED: Removed Hover Tooltips
+    - ADDED: "AUTOGAIN" label above cSatAutoGain dropdown
   ==============================================================================
 */
 
@@ -169,10 +168,6 @@ public:
         slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
         slider.setLookAndFeel(&lnf);
-
-        // --- 2. REMOVED POPUP TOOLTIP ---
-        // slider.setPopupDisplayEnabled(true, true, this); 
-
         addAndMakeVisible(slider);
     }
     ~Knob() override { slider.setLookAndFeel(nullptr); }
@@ -341,6 +336,11 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     prepCombo(cSatMode); cSatMode.addItem("Clean", 1); cSatMode.addItem("Iron", 2); cSatMode.addItem("Steel", 3);
     prepCombo(cSignalFlow); cSignalFlow.addItem("Comp>Sat", 1); cSignalFlow.addItem("Sat>Comp", 2);
 
+    prepCombo(cSatAutoGain);
+    cSatAutoGain.addItem("Off", 1);
+    cSatAutoGain.addItem("Partial", 2);
+    cSatAutoGain.addItem("Full", 3);
+
     bTurbo.setButtonText("FASTER/HARDER");
     bTurbo.setClickingTogglesState(true);
     bTurbo.onClick = [this]() {
@@ -385,6 +385,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     panelSat->addAndMakeVisible(*kSatDrive); panelSat->addAndMakeVisible(*kSatTrim);
     panelSat->addAndMakeVisible(*kSatMix);
     panelSat->addAndMakeVisible(cSatMode);
+    panelSat->addAndMakeVisible(cSatAutoGain);
     panelSat->addAndMakeVisible(cSignalFlow);
 
     panelEq->addAndMakeVisible(*kTone); panelEq->addAndMakeVisible(*kToneFreq);
@@ -415,6 +416,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     initCombo(cTpMode, aTpMode, "tp_mode");
     initCombo(cFluxMode, aFluxMode, "flux_mode");
     initCombo(cSatMode, aSatMode, "sat_mode");
+    initCombo(cSatAutoGain, aSatAutoGain, "sat_autogain");
     initCombo(cSignalFlow, aSignalFlow, "signal_flow");
 
     aTurbo = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo", bTurbo);
@@ -590,6 +592,7 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     drawLabel(cTpMode, "TRANSIENT");
 
     drawLabel(cSatMode, "TRANSFORMER");
+    drawLabel(cSatAutoGain, "AUTOGAIN");
     drawLabel(cSignalFlow, "FLOW");
 }
 
@@ -783,6 +786,7 @@ void UltimateCompAudioProcessorEditor::resized()
         const int miniSlot = si(70.0f);
         const int miniW = si(65.0f);
         cSatMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
+        cSatAutoGain.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         cSignalFlow.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
 
         const int w = c.getWidth() / 3;
