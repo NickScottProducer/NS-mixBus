@@ -1,9 +1,6 @@
 /*
   ==============================================================================
     PluginEditor.cpp
-    Theme: "Cyber Schematic"
-    Changes:
-    - ADDED: "AUTOGAIN" label above cSatAutoGain dropdown
   ==============================================================================
 */
 
@@ -37,6 +34,13 @@ public:
         setColour(juce::ToggleButton::textColourId, c(text));
         setColour(juce::PopupMenu::backgroundColourId, c(bgB));
         setColour(juce::PopupMenu::textColourId, c(text));
+        // Label editing colors
+        setColour(juce::Label::backgroundColourId, c(bgB));
+        setColour(juce::Label::textColourId, c(accent));
+        setColour(juce::Label::outlineColourId, c(accent));
+        setColour(juce::TextEditor::backgroundColourId, c(bgB));
+        setColour(juce::TextEditor::textColourId, c(white));
+        setColour(juce::TextEditor::highlightColourId, c(accent).withAlpha(0.4f));
     }
 
     enum Palette
@@ -109,35 +113,54 @@ public:
 
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool, bool) override
     {
+        if (b.getButtonText().isEmpty()) return;
+
         auto r = b.getLocalBounds().toFloat().reduced(2.0f);
-        const float boxW = 32.0f;
-        const float boxH = 16.0f;
-        auto box = r.withWidth(boxW).withHeight(boxH).withY(r.getCentreY() - boxH / 2);
+        // Small square logic: if text is very short (like "F" or "Auto") OR specifically designated
+        // Here we assume anything longer than 4 chars implies the "Faster/Harder" slider style, 
+        // while "Auto" (4 chars) or "F" uses the small rect style.
+        bool isSmall = b.getButtonText().length() <= 4;
+
+        const float boxW = isSmall ? r.getWidth() : 32.0f;
+        auto box = r;
+
+        if (!isSmall) {
+            const float stdH = 16.0f;
+            box = r.withWidth(boxW).withHeight(stdH).withY(r.getCentreY() - stdH / 2);
+        }
 
         bool on = b.getToggleState();
 
         g.setColour(c(panel2));
-        g.fillRoundedRectangle(box, 8.0f);
+        g.fillRoundedRectangle(box, 4.0f);
         g.setColour(c(edge));
-        g.drawRoundedRectangle(box, 8.0f, 1.0f);
+        g.drawRoundedRectangle(box, 4.0f, 1.0f);
 
         if (on) {
             g.setColour(c(accent).withAlpha(0.2f));
-            g.fillRoundedRectangle(box, 8.0f);
+            g.fillRoundedRectangle(box, 4.0f);
             g.setColour(c(accent));
-            g.drawRoundedRectangle(box, 8.0f, 1.0f);
+            g.drawRoundedRectangle(box, 4.0f, 1.0f);
         }
 
-        float indSize = 10.0f;
-        auto ind = box.withSizeKeepingCentre(indSize, indSize);
-        if (on) ind.translate(8.0f, 0.0f); else ind.translate(-8.0f, 0.0f);
+        if (!isSmall) {
+            // Slider style toggle (Text next to switch)
+            float indSize = 10.0f;
+            auto ind = box.withSizeKeepingCentre(indSize, indSize);
+            if (on) ind.translate(8.0f, 0.0f); else ind.translate(-8.0f, 0.0f);
+            g.setColour(on ? c(accent) : c(text2));
+            g.fillEllipse(ind);
 
-        g.setColour(on ? c(accent) : c(text2));
-        g.fillEllipse(ind);
-
-        g.setColour(c(text));
-        g.setFont(juce::FontOptions(13.0f));
-        g.drawFittedText(b.getButtonText(), r.withTrimmedLeft(boxW + 8.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+            g.setColour(c(text));
+            g.setFont(juce::FontOptions(13.0f));
+            g.drawFittedText(b.getButtonText(), r.withTrimmedLeft(boxW + 8.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+        }
+        else {
+            // Text only (Small Square/Rect for "Auto" or "F")
+            g.setColour(on ? c(white) : c(text2));
+            g.setFont(juce::FontOptions(11.0f).withStyle("bold"));
+            g.drawFittedText(b.getButtonText(), box.toNearestInt(), juce::Justification::centred, 1);
+        }
     }
 
     void drawComboBox(juce::Graphics& g, int width, int height, bool, int, int, int, int, juce::ComboBox&) override
@@ -159,61 +182,81 @@ public:
 };
 
 //=============================================================================
+// KNOB COMPONENT
+//=============================================================================
 class UltimateCompAudioProcessorEditor::Knob final : public juce::Component
 {
 public:
     explicit Knob(UltimateLNF& lookAndFeel, juce::String labelText)
-        : lnf(lookAndFeel), label(std::move(labelText))
+        : lnf(lookAndFeel), labelTitle(std::move(labelText))
     {
         slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
         slider.setLookAndFeel(&lnf);
         addAndMakeVisible(slider);
+
+        valueLabel.setJustificationType(juce::Justification::centred);
+        valueLabel.setEditable(false, true, false);
+        valueLabel.setColour(juce::Label::textColourId, UltimateLNF::c(UltimateLNF::accent));
+        valueLabel.setColour(juce::TextEditor::textColourId, UltimateLNF::c(UltimateLNF::white));
+        valueLabel.setColour(juce::TextEditor::backgroundColourId, UltimateLNF::c(UltimateLNF::bgB));
+
+        valueLabel.onTextChange = [this] {
+            float val = valueLabel.getText().getFloatValue();
+            slider.setValue(val, juce::sendNotification);
+            };
+        addAndMakeVisible(valueLabel);
+
+        slider.onValueChange = [this] {
+            updateLabelText();
+            if (onValChange) onValChange();
+            };
     }
+
     ~Knob() override { slider.setLookAndFeel(nullptr); }
+
     juce::Slider& getSlider() noexcept { return slider; }
     void setUnitSuffix(juce::String s) { suffix = std::move(s); }
     void setTextFromValue(std::function<juce::String(double)> fn) { textFromValue = std::move(fn); }
 
+    std::function<void()> onValChange;
+
+    void updateLabelText()
+    {
+        double v = slider.getValue();
+        juce::String s = textFromValue ? textFromValue(v) : slider.getTextFromValue(v);
+        if (suffix.isNotEmpty() && !s.contains(suffix)) s << suffix;
+        valueLabel.setText(s, juce::dontSendNotification);
+    }
+
     void paint(juce::Graphics& g) override
     {
         auto b = getLocalBounds();
-
-        // Scale text regions with the knob size (prevents overlap when resized).
         const int textH = juce::jlimit(12, 20, (int)std::lround(getHeight() * 0.18f));
         auto top = b.removeFromTop(textH);
-        auto bottom = b.removeFromBottom(textH);
 
         const float fontPx = juce::jlimit(10.0f, 15.0f, (float)textH * 0.80f);
-
         g.setColour(UltimateLNF::c(UltimateLNF::text2));
         g.setFont(juce::FontOptions(fontPx));
-        g.drawFittedText(label, top, juce::Justification::centred, 1);
-
-        g.setColour(UltimateLNF::c(UltimateLNF::accent));
-        g.setFont(juce::FontOptions(fontPx));
-        juce::String s = textFromValue ? textFromValue(slider.getValue())
-            : slider.getTextFromValue(slider.getValue());
-        if (suffix.isNotEmpty() && !s.contains(suffix))
-            s << suffix;
-
-        g.drawFittedText(s, bottom, juce::Justification::centred, 1);
+        g.drawFittedText(labelTitle, top, juce::Justification::centred, 1);
     }
 
     void resized() override
     {
         const int textH = juce::jlimit(12, 20, (int)std::lround(getHeight() * 0.18f));
-
-        // Slider takes full width; keep clear top/bottom bands for label + value.
-        auto a = getLocalBounds().withTrimmedTop(textH).withTrimmedBottom(textH).reduced(2);
-        slider.setBounds(a);
+        auto r = getLocalBounds();
+        r.removeFromTop(textH);
+        auto bot = r.removeFromBottom(textH);
+        valueLabel.setBounds(bot);
+        valueLabel.setFont(juce::FontOptions(juce::jlimit(10.0f, 15.0f, (float)textH * 0.80f)));
+        slider.setBounds(r.reduced(2));
     }
 
-    void updateValueLabel() { repaint(); }
 private:
     UltimateLNF& lnf;
-    juce::String label, suffix;
+    juce::String labelTitle, suffix;
     juce::Slider slider;
+    juce::Label valueLabel;
     std::function<juce::String(double)> textFromValue;
 };
 
@@ -223,21 +266,13 @@ class UltimateCompAudioProcessorEditor::Panel final : public juce::Component
 public:
     Panel(juce::String titleText) : title(std::move(titleText)) {}
 
-    void setHeaderHeight(int h)
-    {
-        headerH = juce::jmax(0, h);
-        repaint();
-    }
-
+    void setHeaderHeight(int h) { headerH = juce::jmax(0, h); repaint(); }
     int getHeaderHeight() const noexcept { return headerH; }
-
     juce::Rectangle<int> getContentBounds() const { return getLocalBounds().reduced(8).withTrimmedTop(headerH); }
 
     void paint(juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced(1.0f);
-
-        // Transparent Body - Outline Only
         g.setColour(UltimateLNF::c(UltimateLNF::edge));
         g.drawRoundedRectangle(r, 6.0f, 1.5f);
 
@@ -249,17 +284,13 @@ public:
             g.setColour(UltimateLNF::c(UltimateLNF::text));
             const float headerFontPx = juce::jlimit(11.0f, 18.0f, header.getHeight() * 0.55f);
             g.setFont(juce::FontOptions(headerFontPx).withStyle("bold"));
-            // Changed to Centered
             g.drawText(title, header.reduced(10, 0), juce::Justification::centred);
 
             g.setColour(UltimateLNF::c(UltimateLNF::edge));
             g.drawHorizontalLine((int)header.getBottom(), header.getX(), header.getRight());
         }
     }
-
-    // We handle children placement manually in editor::resized, so Panel::resized() is empty
     void resized() override {}
-
 private:
     juce::String title;
     int headerH = 26;
@@ -277,27 +308,30 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
 
     auto makeKnob = [this](const juce::String& name) {
         auto k = std::make_unique<Knob>(*lnf, name);
-        k->getSlider().onValueChange = [k = k.get()] { k->updateValueLabel(); };
+        k->onValChange = [k = k.get()] { k->updateLabelText(); };
         return k;
         };
 
+    // --- 1. Create Knobs ---
     kThresh = makeKnob("Threshold"); kThresh->setUnitSuffix("dB");
     kRatio = makeKnob("Ratio"); kRatio->setTextFromValue([](double v) { return juce::String(v, 1) + ":1"; });
     kKnee = makeKnob("Knee"); kKnee->setUnitSuffix("dB");
 
     kAttack = makeKnob("Attack");
     kAttack->setTextFromValue([this](double v) {
-        double val = bTurbo.getToggleState() ? (v * 0.1) : v;
+        double val = bTurboAtt.getToggleState() ? (v * 0.1) : v;
         return juce::String(val, 2) + " ms";
         });
 
     kRelease = makeKnob("Release");
     kRelease->setTextFromValue([this](double v) {
-        double val = bTurbo.getToggleState() ? (v * 0.1) : v;
+        double val = bTurboRel.getToggleState() ? (v * 0.1) : v;
         return juce::String(val, 2) + " ms";
         });
 
-    kMakeup = makeKnob("Makeup"); kMakeup->setUnitSuffix("dB");
+    // OUTPUT KNOB (Renamed from Makeup)
+    kMakeup = makeKnob("Output"); kMakeup->setUnitSuffix("dB");
+
     kMix = makeKnob("Mix"); kMix->setUnitSuffix("%");
 
     kScHpf = makeKnob("SC HPF"); kScHpf->setUnitSuffix("Hz");
@@ -312,6 +346,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kTpRaise = makeKnob("TP Raise"); kTpRaise->setUnitSuffix("dB");
     kFluxAmt = makeKnob("Flux Amt"); kFluxAmt->setUnitSuffix("%");
 
+    kSatPre = makeKnob("Pre-Gain"); kSatPre->setUnitSuffix("dB");
     kSatDrive = makeKnob("Drive"); kSatDrive->setUnitSuffix("dB");
     kSatTrim = makeKnob("Trim"); kSatTrim->setUnitSuffix("dB");
     kSatMix = makeKnob("Mix"); kSatMix->setUnitSuffix("%");
@@ -321,10 +356,9 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kBright = makeKnob("Bright"); kBright->setUnitSuffix("dB");
     kBrightFreq = makeKnob("Freq"); kBrightFreq->setUnitSuffix("Hz");
 
-    // Standardized ComboBox sizing logic
+    // --- 2. Setup Combos & Buttons ---
     auto prepCombo = [&](juce::ComboBox& b) {
         b.setJustificationType(juce::Justification::centred);
-        // We set initial size here, but resized() is authoritative
         b.setSize(90, 20);
         };
 
@@ -335,19 +369,23 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     prepCombo(cFluxMode); cFluxMode.addItem("Off", 1); cFluxMode.addItem("On", 2);
     prepCombo(cSatMode); cSatMode.addItem("Clean", 1); cSatMode.addItem("Iron", 2); cSatMode.addItem("Steel", 3);
     prepCombo(cSignalFlow); cSignalFlow.addItem("Comp>Sat", 1); cSignalFlow.addItem("Sat>Comp", 2);
+    prepCombo(cSatAutoGain); cSatAutoGain.addItem("Off", 1); cSatAutoGain.addItem("Partial", 2); cSatAutoGain.addItem("Full", 3);
 
-    prepCombo(cSatAutoGain);
-    cSatAutoGain.addItem("Off", 1);
-    cSatAutoGain.addItem("Partial", 2);
-    cSatAutoGain.addItem("Full", 3);
+    bTurboAtt.setButtonText("Faster/Harder");
+    bTurboAtt.setClickingTogglesState(true);
+    bTurboAtt.onClick = [this]() { kAttack->updateLabelText(); };
 
-    bTurbo.setButtonText("FASTER/HARDER");
-    bTurbo.setClickingTogglesState(true);
-    bTurbo.onClick = [this]() {
-        kAttack->updateValueLabel();
-        kRelease->updateValueLabel();
-        };
+    bTurboRel.setButtonText("Faster/Harder");
+    bTurboRel.setClickingTogglesState(true);
+    bTurboRel.onClick = [this]() { kRelease->updateLabelText(); };
 
+    bMirror.setButtonText("Mirror");
+    bMirror.setClickingTogglesState(true);
+
+    bAutoMakeup.setButtonText("Auto");
+    bAutoMakeup.setClickingTogglesState(true);
+
+    // --- 3. Create & Add Panels ---
     panelDyn = std::make_unique<Panel>("Main Dynamics");
     panelDet = std::make_unique<Panel>("Sidechain");
     panelCrest = std::make_unique<Panel>("Crest");
@@ -362,13 +400,31 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     addAndMakeVisible(*panelSat);
     addAndMakeVisible(*panelEq);
 
-    // Add controls to Panels
+    // --- 4. Create & Add Buttons ---
+    auto setupPowerBtn = [&](juce::ToggleButton& b, juce::String paramId, std::unique_ptr<ButtonAttachment>& att) {
+        b.setButtonText("");
+        b.setClickingTogglesState(true);
+        att = std::make_unique<ButtonAttachment>(audioProcessor.apvts, paramId, b);
+        addAndMakeVisible(b);
+        };
+
+    setupPowerBtn(bActiveDyn, "active_dyn", aActiveDyn);
+    setupPowerBtn(bActiveDet, "active_det", aActiveDet);
+    setupPowerBtn(bActiveCrest, "active_crest", aActiveCrest);
+    setupPowerBtn(bActiveTpFlux, "active_tf", aActiveTpFlux);
+    setupPowerBtn(bActiveSat, "active_sat", aActiveSat);
+    setupPowerBtn(bActiveEq, "active_eq", aActiveEq);
+
+    // --- 5. Add Controls to Panels ---
     panelDyn->addAndMakeVisible(*kThresh); panelDyn->addAndMakeVisible(*kRatio);
-    panelDyn->addAndMakeVisible(*kKnee); panelDyn->addAndMakeVisible(*kAttack);
-    panelDyn->addAndMakeVisible(*kRelease); panelDyn->addAndMakeVisible(*kMakeup);
+    panelDyn->addAndMakeVisible(*kKnee);
+
+    panelDyn->addAndMakeVisible(*kAttack); panelDyn->addAndMakeVisible(bTurboAtt);
+    panelDyn->addAndMakeVisible(*kRelease); panelDyn->addAndMakeVisible(bTurboRel);
+
+    panelDyn->addAndMakeVisible(*kMakeup); panelDyn->addAndMakeVisible(bAutoMakeup);
     panelDyn->addAndMakeVisible(*kMix);
     panelDyn->addAndMakeVisible(cAutoRel);
-    panelDyn->addAndMakeVisible(bTurbo);
 
     panelDet->addAndMakeVisible(*kScHpf); panelDet->addAndMakeVisible(*kDetRms);
     panelDet->addAndMakeVisible(*kStereoLink); panelDet->addAndMakeVisible(*kFbBlend);
@@ -382,15 +438,19 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     panelTpFlux->addAndMakeVisible(cTpMode);
     panelTpFlux->addAndMakeVisible(cFluxMode);
 
-    panelSat->addAndMakeVisible(*kSatDrive); panelSat->addAndMakeVisible(*kSatTrim);
+    panelSat->addAndMakeVisible(*kSatPre);
+    panelSat->addAndMakeVisible(*kSatDrive);
+    panelSat->addAndMakeVisible(*kSatTrim);
     panelSat->addAndMakeVisible(*kSatMix);
     panelSat->addAndMakeVisible(cSatMode);
     panelSat->addAndMakeVisible(cSatAutoGain);
     panelSat->addAndMakeVisible(cSignalFlow);
+    panelSat->addAndMakeVisible(bMirror);
 
     panelEq->addAndMakeVisible(*kTone); panelEq->addAndMakeVisible(*kToneFreq);
     panelEq->addAndMakeVisible(*kBright); panelEq->addAndMakeVisible(*kBrightFreq);
 
+    // --- 6. Attachments ---
     bindKnob(*kThresh, aThresh, "thresh", "dB"); bindKnob(*kRatio, aRatio, "ratio", "");
     bindKnob(*kKnee, aKnee, "knee", "dB"); bindKnob(*kAttack, aAttack, "att_ms", "ms");
     bindKnob(*kRelease, aRelease, "rel_ms", "ms"); bindKnob(*kMakeup, aMakeup, "makeup", "dB");
@@ -404,7 +464,9 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     bindKnob(*kTpAmt, aTpAmt, "tp_amount", "%"); bindKnob(*kTpRaise, aTpRaise, "tp_thresh_raise", "dB");
     bindKnob(*kFluxAmt, aFluxAmt, "flux_amount", "%");
 
-    bindKnob(*kSatDrive, aSatDrive, "sat_drive", "dB"); bindKnob(*kSatTrim, aSatTrim, "sat_trim", "dB");
+    bindKnob(*kSatPre, aSatPre, "sat_pre_gain", "dB");
+    bindKnob(*kSatDrive, aSatDrive, "sat_drive", "dB");
+    bindKnob(*kSatTrim, aSatTrim, "sat_trim", "dB");
     bindKnob(*kSatMix, aSatMix, "sat_mix", "%");
 
     bindKnob(*kTone, aTone, "sat_tone", "dB"); bindKnob(*kToneFreq, aToneFreq, "sat_tone_freq", "Hz");
@@ -419,7 +481,10 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     initCombo(cSatAutoGain, aSatAutoGain, "sat_autogain");
     initCombo(cSignalFlow, aSignalFlow, "signal_flow");
 
-    aTurbo = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo", bTurbo);
+    aTurboAtt = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_att", bTurboAtt);
+    aTurboRel = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_rel", bTurboRel);
+    aMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sat_mirror", bMirror);
+    aAutoMakeup = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "auto_makeup", bAutoMakeup);
 
     setResizable(true, true);
     setResizeLimits(1000, 600, 2000, 1200);
@@ -439,7 +504,8 @@ void UltimateCompAudioProcessorEditor::bindKnob(Knob& knob, std::unique_ptr<Slid
     knob.getSlider().setName(paramID);
     attachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, paramID, knob.getSlider());
     knob.setUnitSuffix(suffix);
-    knob.updateValueLabel();
+    // Force initial label update
+    knob.updateLabelText();
 }
 
 void UltimateCompAudioProcessorEditor::initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment,
@@ -461,6 +527,11 @@ void UltimateCompAudioProcessorEditor::timerCallback()
 
     float fl = audioProcessor.meterFlux;
     if (fl > smoothFlux) smoothFlux = fl; else smoothFlux *= 0.9f;
+
+    // CREST DEBUG SMOOTHING
+    float cr = audioProcessor.meterCrest;
+    if (cr > smoothCrest) smoothCrest = cr; else smoothCrest *= 0.9f;
+
     repaint();
 }
 
@@ -482,7 +553,6 @@ void UltimateCompAudioProcessorEditor::paint(juce::Graphics& g)
 
 void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
-    // HUGE METERS
     auto drawHugeMeter = [&](juce::Rectangle<int> r, float L, float R, juce::String label) {
         g.setColour(UltimateLNF::c(UltimateLNF::panel2).withAlpha(0.9f));
         g.fillRoundedRectangle(r.toFloat(), 6.0f);
@@ -508,7 +578,6 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     drawHugeMeter(inMeterArea, smoothInL, smoothInR, "IN");
     drawHugeMeter(outMeterArea, smoothOutL, smoothOutR, "OUT");
 
-    // GR BAR - LARGER
     if (!grBarArea.isEmpty()) {
         g.setColour(UltimateLNF::c(UltimateLNF::panel2));
         g.fillRoundedRectangle(grBarArea.toFloat(), 6.0f);
@@ -519,7 +588,6 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         if (w > 1.0f) {
             juce::Graphics::ScopedSaveState ss(g);
             g.reduceClipRegion((int)(grBarArea.getRight() - w), grBarArea.getY(), (int)w, grBarArea.getHeight());
-
             g.setColour(UltimateLNF::c(UltimateLNF::warn));
             for (int i = -20; i < (int)w + 20; i += 6) {
                 g.drawLine((float)(grBarArea.getRight() - w + i), (float)grBarArea.getBottom(),
@@ -530,7 +598,6 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         g.setColour(UltimateLNF::c(UltimateLNF::white));
         g.setFont(juce::FontOptions(16.0f).withStyle("bold"));
         g.drawText(juce::String(smoothGR, 1) + " dB", grBarArea, juce::Justification::centred);
-
         g.setColour(UltimateLNF::c(UltimateLNF::text2));
         g.setFont(juce::FontOptions(12.0f));
         g.drawText("GR", grBarArea.getX() - 30, grBarArea.getY(), 25, grBarArea.getHeight(), juce::Justification::right);
@@ -544,41 +611,44 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         g.fillEllipse(r.reduced(2));
     }
 
-    // DRAW CONNECTING LINES (Attack/Release -> Faster/Harder)
-    if (panelDyn && kAttack && kRelease && bTurbo.isVisible())
-    {
-        auto pPos = panelDyn->getPosition();
-        // Calculate Global Positions
-        auto btnC = bTurbo.getBounds().getCentre() + pPos;
-        auto attC = kAttack->getBounds().getCentre() + pPos;
-        auto relC = kRelease->getBounds().getCentre() + pPos;
-
-        // Shift knob connection points up to the "Top/Label" area of the knob
-        int yOffset = 25;
-        attC.y -= yOffset;
-        relC.y -= yOffset;
-
-        // Connection point on button (Bottom Center)
-        auto btnBot = btnC;
-        btnBot.y += 10; // Slightly below center of button
-
-        g.setColour(UltimateLNF::c(UltimateLNF::ok).withAlpha(0.6f));
-
-        g.drawLine(juce::Line<float>(attC.toFloat(), btnBot.toFloat()), 1.5f);
-        g.drawLine(juce::Line<float>(relC.toFloat(), btnBot.toFloat()), 1.5f);
+    // CREST DEBUG DRAW
+    if (!crestDotArea.isEmpty()) {
+        g.setColour(UltimateLNF::c(UltimateLNF::panel2));
+        g.fillEllipse(crestDotArea.toFloat());
+        if (smoothCrest > 0.001f) {
+            g.setColour(juce::Colours::red.withAlpha(juce::jlimit(0.2f, 1.0f, smoothCrest * 5.0f)));
+            g.fillEllipse(crestDotArea.toFloat().reduced(1.0f));
+            g.setColour(juce::Colours::red.withAlpha(0.4f));
+            g.drawEllipse(crestDotArea.toFloat(), 2.0f);
+        }
     }
 
-    // --- NEW: Draw Labels Above Dropdowns ---
+    // BYPASS POWER BUTTON DRAW
+    auto drawPower = [&](juce::ToggleButton& b) {
+        auto bR = b.getBounds().toFloat();
+        bool on = b.getToggleState();
+        g.setColour(on ? UltimateLNF::c(UltimateLNF::ok) : UltimateLNF::c(UltimateLNF::text2).withAlpha(0.3f));
+        float cx = bR.getCentreX();
+        float cy = bR.getCentreY();
+        float rad = 5.0f;
+        juce::Path p;
+        p.addArc(cx - rad, cy - rad, rad * 2, rad * 2, 0.5f, 5.8f, true);
+        g.strokePath(p, juce::PathStrokeType(1.5f));
+        g.drawLine(cx, cy - rad, cx, cy - rad + 4.0f, 1.5f);
+        if (on) {
+            g.setColour(UltimateLNF::c(UltimateLNF::ok).withAlpha(0.4f));
+            g.fillEllipse(cx - rad, cy - rad, rad * 2, rad * 2);
+        }
+        };
+    drawPower(bActiveDyn); drawPower(bActiveDet); drawPower(bActiveCrest);
+    drawPower(bActiveTpFlux); drawPower(bActiveSat); drawPower(bActiveEq);
+
     auto drawLabel = [&](juce::Component& c, juce::String text) {
         if (auto* p = c.getParentComponent()) {
-            auto r = c.getBoundsInParent(); // Relative to Panel
-            // Convert to Editor coordinates
+            auto r = c.getBoundsInParent();
             auto rEditor = r + p->getPosition();
-
             g.setColour(UltimateLNF::c(UltimateLNF::text2));
-            g.setFont(juce::FontOptions(10.0f).withStyle("bold")); // Small, readable
-
-            // Draw slightly above the component
+            g.setFont(juce::FontOptions(10.0f).withStyle("bold"));
             juce::Rectangle<int> labelRect(rEditor.getX(), rEditor.getY() - 12, rEditor.getWidth(), 12);
             g.drawText(text, labelRect, juce::Justification::centred);
         }
@@ -587,10 +657,8 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     drawLabel(cAutoRel, "RELEASE");
     drawLabel(cThrust, "THRUST");
     drawLabel(cCtrlMode, "CONTROL");
-
     drawLabel(cFluxMode, "FLUX");
     drawLabel(cTpMode, "TRANSIENT");
-
     drawLabel(cSatMode, "TRANSFORMER");
     drawLabel(cSatAutoGain, "AUTOGAIN");
     drawLabel(cSignalFlow, "FLOW");
@@ -598,84 +666,60 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 
 void UltimateCompAudioProcessorEditor::resized()
 {
-    //--------------------------------------------------------------------------
-    // Responsive scaling anchored to the default editor size.
-    // This keeps all controls proportional and prevents slot overflow (overlap)
-    // as the editor is resized within the configured limits.
-    //--------------------------------------------------------------------------
     constexpr float baseW = 1100.0f;
     constexpr float baseH = 680.0f;
-
-    const float s = juce::jlimit(0.75f, 2.0f,
-        juce::jmin(getWidth() / baseW,
-            getHeight() / baseH));
-
-    auto si = [s](float v) -> int
-        {
-            return juce::jmax(1, (int)std::lround(v * s));
-        };
-
+    const float s = juce::jlimit(0.75f, 2.0f, juce::jmin(getWidth() / baseW, getHeight() / baseH));
+    auto si = [s](float v) -> int { return juce::jmax(1, (int)std::lround(v * s)); };
     const int outerPad = si(15.0f);
     auto r = getLocalBounds().reduced(outerPad);
 
-    // Scale panel headers to match UI scale
     const int headerH = si(26.0f);
-    panelDyn->setHeaderHeight(headerH);
-    panelDet->setHeaderHeight(headerH);
-    panelCrest->setHeaderHeight(headerH);
-    panelTpFlux->setHeaderHeight(headerH);
-    panelSat->setHeaderHeight(headerH);
-    panelEq->setHeaderHeight(headerH);
+    panelDyn->setHeaderHeight(headerH); panelDet->setHeaderHeight(headerH);
+    panelCrest->setHeaderHeight(headerH); panelTpFlux->setHeaderHeight(headerH);
+    panelSat->setHeaderHeight(headerH); panelEq->setHeaderHeight(headerH);
 
-    // Top meters
     auto topBar = r.removeFromTop(si(60.0f));
-
     const int meterH = si(24.0f);
     const int meterGap = si(6.0f);
     const int metersTotalWidth = juce::jmin(topBar.getWidth(), si(300.0f));
-
-    auto centerMeters = topBar.withWidth(metersTotalWidth)
-        .withX((getWidth() - metersTotalWidth) / 2);
-
+    auto centerMeters = topBar.withWidth(metersTotalWidth).withX((getWidth() - metersTotalWidth) / 2);
     inMeterArea = centerMeters.removeFromTop(meterH);
     centerMeters.removeFromTop(meterGap);
     outMeterArea = centerMeters.removeFromTop(meterH);
 
-    // Rows
     const int rowH = r.getHeight() / 3;
     auto row1 = r.removeFromTop(rowH);
     auto row2 = r.removeFromTop(rowH);
     auto row3 = r;
 
-    // Standard control dimensions (scaled)
     const int comboH = si(20.0f);
     const int comboW = si(90.0f);
-
     const int panelPadX = si(2.0f);
     const int panelPadY = si(5.0f);
-
-    // --- 1. FIXED KNOB SIZES (SCALED) ---
-    // 64x74 creates a nice uniform size for all knobs
     const int fixedKnobW = si(64.0f);
     const int fixedKnobH = si(74.0f);
 
-    // Helper: centers a fixed size knob in the given slot
-    auto placeKnob = [&](Knob* k, juce::Rectangle<int> slot)
-        {
-            if (k == nullptr) return;
-            // Center the fixed dimensions within the slot
-            k->setBounds(slot.withSizeKeepingCentre(fixedKnobW, fixedKnobH));
+    auto placeKnob = [&](Knob* k, juce::Rectangle<int> slot) {
+        if (k == nullptr) return;
+        k->setBounds(slot.withSizeKeepingCentre(fixedKnobW, fixedKnobH));
         };
 
-    // --- DYNAMICS ---
+    // PLACE POWER BUTTONS
+    auto placePowerBtn = [&](juce::ToggleButton& b, juce::Component* panel) {
+        if (panel == nullptr) return;
+        auto pr = panel->getBounds();
+        // Top right of panel, vertical centered in header
+        int btnS = si(18.0f);
+        int mR = si(10.0f);
+        int mY = (headerH - btnS) / 2;
+        b.setBounds(pr.getRight() - btnS - mR, pr.getY() + mY, btnS, btnS);
+        };
+
     panelDyn->setBounds(row1.reduced(0, panelPadY));
+    placePowerBtn(bActiveDyn, panelDyn.get());
     {
         auto cLocal = panelDyn->getContentBounds();
-
-        // Bottom strip for GR bar + Auto Release
         auto bot = cLocal.removeFromBottom(si(44.0f));
-
-        // GR Bar (centered, scaled, never exceeds available width)
         const int barW = juce::jmin(bot.getWidth(), si(300.0f));
         const int barH = juce::jmin(bot.getHeight(), si(24.0f));
         auto bar = bot.withWidth(barW).withHeight(barH);
@@ -683,53 +727,58 @@ void UltimateCompAudioProcessorEditor::resized()
         bar.setY(bot.getY() + (bot.getHeight() - barH) / 2);
         grBarArea = bar.translated(panelDyn->getX(), panelDyn->getY());
 
-        // AutoRel bottom-right
         auto botRight = bot.removeFromRight(comboW + si(10.0f));
         cAutoRel.setBounds(botRight.withSizeKeepingCentre(comboW, comboH));
 
-        // Reserve top strip for the "Faster/Harder" button
         auto topStrip = cLocal.removeFromTop(si(24.0f));
-
         const int colW = cLocal.getWidth() / 7;
 
         placeKnob(kThresh.get(), cLocal.removeFromLeft(colW));
         placeKnob(kRatio.get(), cLocal.removeFromLeft(colW));
         placeKnob(kKnee.get(), cLocal.removeFromLeft(colW));
 
-        // Capture layout slots for Attack/Release so the Turbo button can anchor between them
+        // ATTACK WITH BUTTON ABOVE
         auto rAttackSlot = cLocal.removeFromLeft(colW);
         placeKnob(kAttack.get(), rAttackSlot);
+        int btnW = si(120.0f);
+        int btnH = si(20.0f);
+        // Position above the knob
+        bTurboAtt.setBounds(rAttackSlot.getX() + (rAttackSlot.getWidth() - btnW) / 2,
+            kAttack->getY() - btnH - si(4), // 4px padding above knob
+            btnW, btnH);
 
+        // RELEASE WITH BUTTON ABOVE
         auto rReleaseSlot = cLocal.removeFromLeft(colW);
         placeKnob(kRelease.get(), rReleaseSlot);
+        bTurboRel.setBounds(rReleaseSlot.getX() + (rReleaseSlot.getWidth() - btnW) / 2,
+            kRelease->getY() - btnH - si(4),
+            btnW, btnH);
 
-        placeKnob(kMakeup.get(), cLocal.removeFromLeft(colW));
+        // MAKEUP WITH AUTO BUTTON ABOVE
+        auto rMakeupSlot = cLocal.removeFromLeft(colW);
+        placeKnob(kMakeup.get(), rMakeupSlot);
+        // Small "Auto" button above Makeup
+        int autoW = si(40.0f);
+        bAutoMakeup.setBounds(rMakeupSlot.getX() + (rMakeupSlot.getWidth() - autoW) / 2,
+            kMakeup->getY() - btnH - si(4),
+            autoW, btnH);
+
         placeKnob(kMix.get(), cLocal.removeFromLeft(colW));
-
-        // Turbo button positioned in the top strip, centered over Attack/Release boundary
-        auto turboSpan = topStrip.withX(rAttackSlot.getX())
-            .withWidth(rAttackSlot.getWidth() + rReleaseSlot.getWidth());
-
-        const int turboW = juce::jmin(turboSpan.getWidth(), si(140.0f));
-        const int turboH = juce::jmin(turboSpan.getHeight(), si(24.0f));
-
-        bTurbo.setBounds(turboSpan.withSizeKeepingCentre(turboW, turboH));
     }
 
-    // --- DETECTOR & CREST ---
-    // Split row 2
     {
         const int detW = (int)std::lround(row2.getWidth() * 0.6f);
         panelDet->setBounds(row2.removeFromLeft(detW).reduced(panelPadX, panelPadY));
+        placePowerBtn(bActiveDet, panelDet.get());
+
         panelCrest->setBounds(row2.reduced(panelPadX, panelPadY));
+        placePowerBtn(bActiveCrest, panelCrest.get());
     }
 
     {
-        // Detector
         auto c = panelDet->getContentBounds().reduced(si(2.0f));
         auto bot = c.removeFromBottom(si(44.0f));
         cThrust.setBounds(bot.removeFromRight(comboW).withSizeKeepingCentre(comboW, comboH));
-
         const int w = c.getWidth() / 4;
         placeKnob(kScHpf.get(), c.removeFromLeft(w));
         placeKnob(kDetRms.get(), c.removeFromLeft(w));
@@ -738,32 +787,36 @@ void UltimateCompAudioProcessorEditor::resized()
     }
 
     {
-        // Crest
         auto c = panelCrest->getContentBounds().reduced(si(2.0f));
         auto bot = c.removeFromBottom(si(44.0f));
         cCtrlMode.setBounds(bot.removeFromRight(comboW).withSizeKeepingCentre(comboW, comboH));
-
         const int w = c.getWidth() / 2;
         placeKnob(kCrestTarget.get(), c.removeFromLeft(w));
         placeKnob(kCrestSpeed.get(), c);
+
+        // Debug Dot Position
+        auto pr = panelCrest->getBounds();
+        int dotS = si(8.0f);
+        crestDotArea = juce::Rectangle<int>(pr.getX() + si(10.0f), pr.getY() + headerH + si(10.0f), dotS, dotS);
     }
 
-    // --- TP, SAT, EQ ---
     const int w3 = row3.getWidth() / 3;
     panelTpFlux->setBounds(row3.removeFromLeft(w3).reduced(panelPadX, panelPadY));
+    placePowerBtn(bActiveTpFlux, panelTpFlux.get());
+
     panelSat->setBounds(row3.removeFromLeft(w3).reduced(panelPadX, panelPadY));
+    placePowerBtn(bActiveSat, panelSat.get());
+
     panelEq->setBounds(row3.reduced(panelPadX, panelPadY));
+    placePowerBtn(bActiveEq, panelEq.get());
 
     {
-        // TP / Flux
         auto c = panelTpFlux->getContentBounds().reduced(si(2.0f));
         auto bot = c.removeFromBottom(si(44.0f));
-
         const int miniSlot = si(70.0f);
         const int miniW = si(65.0f);
         cFluxMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         cTpMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
-
         const int w = c.getWidth() / 3;
         placeKnob(kTpAmt.get(), c.removeFromLeft(w));
         placeKnob(kTpRaise.get(), c.removeFromLeft(w));
@@ -771,17 +824,18 @@ void UltimateCompAudioProcessorEditor::resized()
     }
 
     {
-        // Saturation
         auto c = panelSat->getContentBounds().reduced(si(4.0f));
-
-        // "Flux" indicator dot (scaled)
         auto satRect = panelSat->getBounds();
-        const int dotPadR = si(30.0f);
+        const int dotPadL = si(10.0f); // Changed from Right to Left padding
         const int dotY = si(8.0f);
         const int dotS = si(12.0f);
-        fluxDotArea = juce::Rectangle<int>(satRect.getRight() - dotPadR, satRect.getY() + dotY, dotS, dotS);
+        // Use getX() + dotPadL instead of getRight() - dotPadR
+        fluxDotArea = juce::Rectangle<int>(satRect.getX() + dotPadL, satRect.getY() + dotY, dotS, dotS);
 
         auto bot = c.removeFromBottom(si(44.0f));
+        // Add Mirror button to bottom row
+        auto mirrorSlot = bot.removeFromRight(si(50.0f));
+        bMirror.setBounds(mirrorSlot.withSizeKeepingCentre(si(40.0f), si(18.0f)));
 
         const int miniSlot = si(70.0f);
         const int miniW = si(65.0f);
@@ -789,14 +843,15 @@ void UltimateCompAudioProcessorEditor::resized()
         cSatAutoGain.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         cSignalFlow.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
 
-        const int w = c.getWidth() / 3;
+        // Now 4 knobs across
+        const int w = c.getWidth() / 4;
+        placeKnob(kSatPre.get(), c.removeFromLeft(w));
         placeKnob(kSatDrive.get(), c.removeFromLeft(w));
         placeKnob(kSatTrim.get(), c.removeFromLeft(w));
         placeKnob(kSatMix.get(), c);
     }
 
     {
-        // EQ (No switches here, just knobs)
         auto c = panelEq->getContentBounds().reduced(si(4.0f));
         const int w = c.getWidth() / 4;
         placeKnob(kTone.get(), c.removeFromLeft(w));

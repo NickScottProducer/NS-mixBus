@@ -17,7 +17,7 @@ public:
     ~UltimateCompAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
-    void paintOverChildren(juce::Graphics&) override; // <--- Critical addition
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
 
 private:
@@ -45,11 +45,14 @@ private:
     std::unique_ptr<Knob> kScHpf, kDetRms, kStereoLink, kFbBlend;
     std::unique_ptr<Knob> kCrestTarget, kCrestSpeed;
     std::unique_ptr<Knob> kTpAmt, kTpRaise, kFluxAmt;
-    std::unique_ptr<Knob> kSatDrive, kSatTrim, kSatMix;
+
+    // NEW: SatPre
+    std::unique_ptr<Knob> kSatPre, kSatDrive, kSatTrim, kSatMix;
     std::unique_ptr<Knob> kTone, kToneFreq, kBright, kBrightFreq;
 
     juce::ComboBox cAutoRel;
-    juce::ToggleButton bTurbo;
+    // NEW: Split Turbo Buttons & Mirror & AutoMakeup
+    juce::ToggleButton bTurboAtt, bTurboRel, bMirror, bAutoMakeup;
 
     juce::ComboBox cThrust;
     juce::ComboBox cCtrlMode;
@@ -58,6 +61,9 @@ private:
     juce::ComboBox cSatMode;
     juce::ComboBox cSatAutoGain;
     juce::ComboBox cSignalFlow;
+
+    // Module Bypasses
+    juce::ToggleButton bActiveDyn, bActiveDet, bActiveCrest, bActiveTpFlux, bActiveSat, bActiveEq;
 
     // Attachments
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -68,11 +74,15 @@ private:
     std::unique_ptr<SliderAttachment> aScHpf, aDetRms, aStereoLink, aFbBlend;
     std::unique_ptr<SliderAttachment> aCrestTarget, aCrestSpeed;
     std::unique_ptr<SliderAttachment> aTpAmt, aTpRaise, aFluxAmt;
-    std::unique_ptr<SliderAttachment> aSatDrive, aSatTrim, aSatMix;
+    std::unique_ptr<SliderAttachment> aSatPre, aSatDrive, aSatTrim, aSatMix;
     std::unique_ptr<SliderAttachment> aTone, aToneFreq, aBright, aBrightFreq;
 
     std::unique_ptr<ComboBoxAttachment> aAutoRel, aThrust, aCtrlMode, aTpMode, aFluxMode, aSatMode, aSatAutoGain, aSignalFlow;
-    std::unique_ptr<ButtonAttachment> aTurbo;
+
+    std::unique_ptr<ButtonAttachment> aTurboAtt, aTurboRel, aMirror, aAutoMakeup;
+
+    // Bypass Attachments
+    std::unique_ptr<ButtonAttachment> aActiveDyn, aActiveDet, aActiveCrest, aActiveTpFlux, aActiveSat, aActiveEq;
 
     // Helpers
     void initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment, const juce::String& paramID);
@@ -83,12 +93,14 @@ private:
     float smoothOutL = 0.f, smoothOutR = 0.f;
     float smoothGR = 0.f;
     float smoothFlux = 0.f;
+    float smoothCrest = 0.f; // Debug
 
     // Paint geometry (Global Coordinates)
     juce::Rectangle<int> inMeterArea;
     juce::Rectangle<int> outMeterArea;
     juce::Rectangle<int> grBarArea;
     juce::Rectangle<int> fluxDotArea;
+    juce::Rectangle<int> crestDotArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(UltimateCompAudioProcessorEditor)
 };

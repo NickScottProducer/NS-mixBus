@@ -50,8 +50,11 @@ public:
     std::atomic<float> meterInR{ 0.0f };
     std::atomic<float> meterOutL{ 0.0f };
     std::atomic<float> meterOutR{ 0.0f };
-    std::atomic<float> meterGR{ 0.0f }; // Gain Reduction (dB)
-    std::atomic<float> meterFlux{ 0.0f }; // Saturation Heat (0.0 - 1.0+)
+    std::atomic<float> meterGR{ 0.0f };
+    std::atomic<float> meterFlux{ 0.0f };
+
+    // NEW: Crest Debug
+    std::atomic<float> meterCrest{ 0.0f };
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
