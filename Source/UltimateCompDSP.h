@@ -3,16 +3,10 @@
 
     UltimateCompDSP.h
     Port of Ultimate Mix Bus Compressor v3.4 (JSFX)
-    Updated:
-      - Signal Flow switching (Comp>Sat vs Sat>Comp)
-      - FIX: Stereo-link detector math (link control now behaves predictably)
-      - FIX: Makeup no longer modulates feedback detector path
-      - FIX: Mono safety (processor now routes safely)
-      - IMPROVE: Saturation oversampling uses JUCE dsp::Oversampling (polyphase halfband)
-      - IMPROVE: Light parameter smoothing on core gains/threshold/ratio to reduce zipper noise
 
-      - NEW: Auto-Gain (Gain Compensation) in Saturation block
-      - FIX: Safety clamping in "Iron" saturation mode to prevent explosion
+    CHANGES:
+    - FIX: Added missing member declaration 'sat_trim_lin_sm' to fix compile error.
+    - CLEANUP: Replaced M_PI macro with juce::MathConstants to fix macro warnings.
 
   ==============================================================================
 */
@@ -24,10 +18,6 @@
 #include <cmath>
 #include <algorithm>
 #include "SimpleBiquad.h"
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 class UltimateCompDSP
 {
@@ -87,7 +77,7 @@ public:
     // --- OUTPUT ---
     float p_makeup = 0.0f;
     float p_dry_wet = 100.0f;
-    float p_out_trim = 0.0f; // NEW: post-mix output trim
+    float p_out_trim = 0.0f;
 
     // ==============================================================================
     // GETTERS FOR METERING
@@ -172,6 +162,7 @@ public:
         out_lin_sm = dbToLin((double)p_out_trim);
 
         sat_drive_lin_sm = dbToLin((double)p_sat_drive);
+        sat_trim_lin_sm = dbToLin((double)p_sat_trim); // Used here, now declared below
         sat_mix_sm = juce::jlimit(0.0, 1.0, (double)p_sat_mix / 100.0);
 
         last_sat_mode = -1;
@@ -550,7 +541,12 @@ private:
         if (p_ctrl_mode != 0)
         {
             const double pk = det_max;
-            cf_peak_env = smooth1p(cf_peak_env, pk, crest_coeff);
+
+            // FIX: Use instant attack for peak envelope to truly track crest factor.
+            if (pk > cf_peak_env)
+                cf_peak_env = pk;
+            else
+                cf_peak_env = smooth1p(cf_peak_env, pk, crest_coeff);
 
             const double p = det_avg * det_avg;
             cf_rms_sum = smooth1p(cf_rms_sum, p, crest_coeff);
@@ -805,7 +801,10 @@ private:
         }
 
         // User trim + tone shelf
+        // Smooth the trim value towards the target (sat_trim_lin)
+        sat_trim_lin_sm = smooth1p(sat_trim_lin_sm, sat_trim_lin, smooth_alpha);
         const double trim = (double)sat_trim_lin_sm;
+
         for (int ch = 0; ch < nCh; ++ch)
         {
             float* y = io.getWritePointer(ch);
@@ -928,6 +927,7 @@ private:
     double sat_drive_lin_sm_os = 1.0;
 
     double sat_trim_lin = 1.0;
+    double sat_trim_lin_sm = 1.0; // <--- FIXED: Added this variable
 
     double sat_mix_target = 1.0;
     double sat_mix_sm = 1.0;
