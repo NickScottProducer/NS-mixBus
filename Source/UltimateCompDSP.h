@@ -2,6 +2,7 @@
   ==============================================================================
     UltimateCompDSP.h
     Port of Ultimate Mix Bus Compressor v3.10 (Auto-Gain Tuned & Bi-Polar Out)
+    Updated: Sidechain with LC & HC Filters
   ==============================================================================
 */
 
@@ -33,6 +34,13 @@ public:
     bool p_active_sat = true;
     bool p_active_eq = true;
 
+    // --- SIDECHAIN EXPERT ---
+    int  p_sc_input_mode = 0; // 0 = Internal, 1 = External
+
+    // M/S Routing
+    // 0 = Normal Stereo Link, 1 = Mid, 2 = Side, 3 = M>S, 4 = S>M
+    int   p_ms_mode = 0;
+
     // --- DYNAMICS ---
     float p_thresh = -20.0f;
     float p_ratio = 4.0f;
@@ -41,7 +49,7 @@ public:
     float p_rel_ms = 100.0f;
     int   p_auto_rel = 0;
 
-    // NEW: Split Turbo
+    // Split Turbo
     bool  p_turbo_att = false;
     bool  p_turbo_rel = false;
 
@@ -54,7 +62,8 @@ public:
     int   p_thrust_mode = 0;
     float p_det_rms = 0.0f;
     float p_stereo_link = 100.0f;
-    float p_sc_hp_freq = 20.0f;
+    float p_sc_hp_freq = 20.0f;    // Low Cut
+    float p_sc_lp_freq = 20000.0f; // High Cut (Re-added)
     float p_fb_blend = 0.0f;
 
     // --- TRANSIENT PRIORITY ---
@@ -68,12 +77,9 @@ public:
 
     // --- SATURATION ---
     int   p_sat_mode = 0;
-
-    // NEW: Pre-Gain and Mirror
     float p_sat_pre_gain = 0.0f;
     bool  p_sat_mirror = false;
-
-    float p_sat_drive = 0.0f; // Internal drive (extra character)
+    float p_sat_drive = 0.0f;
     float p_sat_trim = 0.0f;
     float p_sat_tone = 0.0f;
     float p_sat_tone_freq = 5500.0f;
@@ -85,7 +91,7 @@ public:
     float p_harm_freq = 4500.0f;
 
     // --- OUTPUT ---
-    float p_makeup = 0.0f; // Now Bi-Polar (-24 to +24)
+    float p_makeup = 0.0f;
     bool  p_auto_makeup = false;
     float p_dry_wet = 100.0f;
     float p_out_trim = 0.0f;
@@ -116,6 +122,7 @@ public:
         dry_buf.setSize(2, max_block, false, false, true);
         wet_buf.setSize(2, max_block, false, false, true);
         sat_clean_buf.setSize(2, max_block, false, false, true);
+        sc_internal_buf.setSize(2, max_block, false, false, true);
 
         // Oversampling (Wet Path)
         os_stages = 2;
@@ -124,12 +131,12 @@ public:
             2, os_stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
         os->initProcessing((size_t)max_block);
 
-        // Oversampling (Dry Path - Twin Path Strategy)
+        // Oversampling (Dry Path)
         os_dry = std::make_unique<juce::dsp::Oversampling<float>>(
             2, os_stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
         os_dry->initProcessing((size_t)max_block);
 
-        // Internal Delay for Sat Mix
+        // Internal Delay
         juce::dsp::ProcessSpec spec;
         spec.sampleRate = s_rate;
         spec.maximumBlockSize = (juce::uint32)max_block;
@@ -146,7 +153,9 @@ public:
     void resetState()
     {
         sc_hp_l.reset(); sc_hp_r.reset();
+        sc_lp_l.reset(); sc_lp_r.reset(); // Reset LPF
         sc_shelf_l.reset(); sc_shelf_r.reset();
+
         sat_tone_l.reset(); sat_tone_r.reset();
         harm_pre_l.reset(); harm_pre_r.reset();
         harm_post_l.reset(); harm_post_r.reset();
@@ -186,12 +195,12 @@ public:
     // MAIN PROCESS
     // ==============================================================================
 
-    void process(juce::AudioBuffer<float>& buffer)
+    void process(juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>* sidechainBuffer = nullptr)
     {
         const int nSamp = buffer.getNumSamples();
         if (nSamp <= 0) return;
 
-        // 1. Prepare Dry Buffer
+        // 1. Prepare Buffers
         dry_buf.setSize(2, nSamp, false, false, true);
         if (buffer.getNumChannels() == 1) {
             dry_buf.copyFrom(0, 0, buffer, 0, 0, nSamp);
@@ -201,23 +210,42 @@ public:
             dry_buf.makeCopyOf(buffer, true);
         }
 
-        // 2. Prepare Wet Buffer
         wet_buf.makeCopyOf(dry_buf, true);
 
-        // Smoothing
+        // 2. Prepare Sidechain Source
+        sc_internal_buf.setSize(2, nSamp, false, false, true);
+
+        // Input Vectoring: External vs Internal
+        if (p_sc_input_mode == 1 && sidechainBuffer != nullptr && sidechainBuffer->getNumChannels() > 0)
+        {
+            // EXT Mode: Copy from Sidechain Bus
+            if (sidechainBuffer->getNumChannels() == 1) {
+                sc_internal_buf.copyFrom(0, 0, *sidechainBuffer, 0, 0, nSamp);
+                sc_internal_buf.copyFrom(1, 0, *sidechainBuffer, 0, 0, nSamp);
+            }
+            else {
+                sc_internal_buf.makeCopyOf(*sidechainBuffer, true);
+            }
+        }
+        else
+        {
+            // IN Mode: Use Main Input
+            sc_internal_buf.makeCopyOf(dry_buf, true);
+        }
+
         smooth_alpha_block = std::exp(-(double)nSamp / (0.020 * s_rate));
 
         // 3. Process Wet Path
         if (p_signal_flow == 1) {
             processSaturationBlock(wet_buf);
-            processCompressorBlock(wet_buf);
+            processCompressorBlock(wet_buf); // Consumes sc_internal_buf
         }
         else {
-            processCompressorBlock(wet_buf);
+            processCompressorBlock(wet_buf); // Consumes sc_internal_buf
             processSaturationBlock(wet_buf);
         }
 
-        // 4. TWIN-PATH OVERSAMPLING FOR DRY SIGNAL
+        // 4. TWIN-PATH OVERSAMPLING
         if ((p_active_sat || p_active_eq) && os && os_dry)
         {
             juce::dsp::AudioBlock<float> dryBlock(dry_buf);
@@ -229,18 +257,11 @@ public:
         const double dw_target = juce::jlimit(0.0, 1.0, (double)p_dry_wet / 100.0);
         drywet_sm = smooth1p(drywet_sm, dw_target, smooth_alpha_block);
 
-        // Calculate Output Gain Logic
-        // Base output trim
         double total_out_db = (double)p_out_trim;
-
-        // MIRROR LOGIC: If Mirror ON, subtract Pre-Gain from output
-        if (p_sat_mirror && p_active_sat) {
-            total_out_db -= (double)p_sat_pre_gain;
-        }
+        if (p_sat_mirror && p_active_sat) total_out_db -= (double)p_sat_pre_gain;
 
         double final_gain_target = dbToLin(total_out_db);
         out_lin_sm = smooth1p(out_lin_sm, final_gain_target, smooth_alpha_block);
-
         const float finalGain = (float)out_lin_sm;
 
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -252,18 +273,15 @@ public:
             const float dm = 1.0f - wm;
 
             for (int i = 0; i < nSamp; ++i)
-            {
                 out[i] = (wet[i] * wm + dry[i] * dm) * finalGain;
-            }
         }
     }
 
     void updateParameters()
     {
-        // NEW: Separate Turbo Logic
+        // Turbo Logic
         const double attMul = (p_turbo_att ? 0.1 : 1.0);
         const double relMul = (p_turbo_rel ? 0.1 : 1.0);
-
         const double att_ms = std::max(0.05, (double)p_att_ms * attMul);
         const double rel_ms = std::max(1.0, (double)p_rel_ms * relMul);
 
@@ -286,9 +304,15 @@ public:
         stereo_link = juce::jlimit(0.0, 1.0, (double)p_stereo_link / 100.0);
         fb_blend = juce::jlimit(0.0, 1.0, (double)p_fb_blend / 100.0);
 
+        // --- SIDECHAIN EQ UPDATES ---
         sc_hp_l.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
         sc_hp_r.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
 
+        // High Cut (LPF)
+        sc_lp_l.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
+        sc_lp_r.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
+
+        // Thrust
         thrust_gain_db = 0.0;
         if (p_thrust_mode == 1) thrust_gain_db = 3.0;
         if (p_thrust_mode == 2) thrust_gain_db = 6.0;
@@ -308,26 +332,18 @@ public:
         flux_enabled = (p_flux_mode != 0);
         flux_amt = juce::jlimit(0.0, 1.0, (double)p_flux_amount / 100.0);
 
-        // REFINED: Auto Makeup Gain Calculation
-        // Adjusted heuristic to be less aggressive when GR hits.
-        // We use a milder slope constant (0.3) instead of 0.5.
-        // Also added a clamp to prevent runaway gain at extreme settings.
+        // Auto Makeup Gain
         double auto_gain_lin = 1.0;
         if (p_auto_makeup) {
             double r_eff = std::max(1.0, (double)p_ratio);
             double slope = 1.0 - (1.0 / r_eff);
-            double gain_est_db = std::abs((double)p_thresh) * slope * 0.3; // Scaled down to 0.3 for musical behavior
-            gain_est_db = std::min(gain_est_db, 20.0); // Hard clamp at +20dB for safety
+            double gain_est_db = std::abs((double)p_thresh) * slope * 0.3;
+            gain_est_db = std::min(gain_est_db, 20.0);
             auto_gain_lin = std::pow(10.0, gain_est_db / 20.0);
         }
 
-        // Apply Manual Output + Auto Gain
         makeup_lin_target = dbToLin((double)p_makeup) * auto_gain_lin;
-
-        // Output trim target handled in process loop for mirror logic
-
         smooth_alpha = std::exp(-1.0 / (0.020 * s_rate));
-
         os_srate = s_rate * (double)os_factor;
         smooth_alpha_os = std::exp(-1.0 / (0.020 * os_srate));
 
@@ -342,10 +358,8 @@ public:
 
         iron_voicing_l.update_shelf(100.0, 1.0, 0.707, s_rate);
         iron_voicing_r.update_shelf(100.0, 1.0, 0.707, s_rate);
-
         steel_low_l.update_shelf(40.0, 1.5, 0.707, s_rate);
         steel_low_r.update_shelf(40.0, 1.5, 0.707, s_rate);
-
         steel_high_l.update_lpf(9000.0, 0.707, s_rate);
         steel_high_r.update_lpf(9000.0, 0.707, s_rate);
 
@@ -384,6 +398,8 @@ private:
         const int nSamp = io.getNumSamples();
         float* l = io.getWritePointer(0);
         float* r = io.getWritePointer(1);
+        float* sc_l = sc_internal_buf.getWritePointer(0);
+        float* sc_r = sc_internal_buf.getWritePointer(1);
 
         const double thresh_target = (double)p_thresh;
         const double ratio_target = std::max(1.0, (double)p_ratio);
@@ -396,48 +412,107 @@ private:
             knee_sm = smooth1p(knee_sm, knee_target, smooth_alpha);
             makeup_lin_sm = smooth1p(makeup_lin_sm, makeup_lin_target, smooth_alpha);
 
-            const double in_l = (double)l[i];
-            const double in_r = (double)r[i];
+            // --- 1. SIDECHAIN CONDITIONING ---
+            double s_l = (double)sc_l[i];
+            double s_r = (double)sc_r[i];
 
-            if (!p_active_dyn)
-            {
-                fb_prev_l = in_l; fb_prev_r = in_r;
-                env = 0.0;
-                continue;
+            if (p_active_det) {
+                // HPF (Main Panel)
+                s_l = sc_hp_l.process(s_l);
+                s_r = sc_hp_r.process(s_r);
+
+                // LPF (High Cut - Re-added)
+                s_l = sc_lp_l.process(s_l);
+                s_r = sc_lp_r.process(s_r);
+
+                // Thrust (Shelf)
+                if (p_thrust_mode > 0) {
+                    s_l = sc_shelf_l.process(s_l);
+                    s_r = sc_shelf_r.process(s_r);
+                }
             }
 
-            const double sc_l = in_l * (1.0 - fb_blend) + fb_prev_l * fb_blend;
-            const double sc_r = in_r * (1.0 - fb_blend) + fb_prev_r * fb_blend;
+            // Write back conditioned SC (internal use only now)
+            sc_l[i] = (float)s_l;
+            sc_r[i] = (float)s_r;
 
-            runDetector(sc_l, sc_r);
+            // --- 2. DETECTOR ROUTING MATRIX ---
+            double det_in_l = s_l;
+            double det_in_r = s_r;
 
-            const double lin_gain = std::pow(10.0, env / 20.0);
-            const double vca_l = in_l * lin_gain;
-            const double vca_r = in_r * lin_gain;
+            // M/S Decode for Detector
+            if (p_ms_mode > 0) {
+                double mid = (s_l + s_r) * 0.5;
+                double side = (s_l - s_r) * 0.5;
 
-            fb_prev_l = vca_l; fb_prev_r = vca_r;
+                if (p_ms_mode == 1) { det_in_l = mid; det_in_r = mid; } // Mid Trig
+                else if (p_ms_mode == 2) { det_in_l = side; det_in_r = side; } // Side Trig
+                else if (p_ms_mode == 3) { det_in_l = mid; det_in_r = mid; } // M>S (Trig is Mid)
+                else if (p_ms_mode == 4) { det_in_l = side; det_in_r = side; } // S>M (Trig is Side)
+            }
 
-            l[i] = (float)(vca_l * makeup_lin_sm);
-            r[i] = (float)(vca_r * makeup_lin_sm);
+            // Apply Feedback Blend
+            double in_l = (double)l[i];
+            double in_r = (double)r[i];
+
+            if (p_active_dyn) {
+                det_in_l = det_in_l * (1.0 - fb_blend) + fb_prev_l * fb_blend;
+                det_in_r = det_in_r * (1.0 - fb_blend) + fb_prev_r * fb_blend;
+            }
+
+            // Run Detector
+            if (p_active_dyn) {
+                runDetector(det_in_l, det_in_r);
+            }
+            else {
+                env = 0.0;
+                det_env = 0.0;
+            }
+
+            // --- 3. APPLY GAIN REDUCTION ---
+            double lin_gain = std::pow(10.0, env / 20.0);
+            lin_gain *= makeup_lin_sm;
+
+            // VCA Logic with M/S Output
+            if (p_ms_mode == 0) {
+                // Normal L/R
+                l[i] = (float)(in_l * lin_gain);
+                r[i] = (float)(in_r * lin_gain);
+                fb_prev_l = l[i]; fb_prev_r = r[i];
+            }
+            else {
+                // M/S Application
+                double mid = (in_l + in_r) * 0.5;
+                double side = (in_l - in_r) * 0.5;
+
+                if (p_ms_mode == 1) { // Mid Mode: Compress Mid
+                    mid *= lin_gain;
+                }
+                else if (p_ms_mode == 2) { // Side Mode: Compress Side
+                    side *= lin_gain;
+                }
+                else if (p_ms_mode == 3) { // M>S Mode: Compress Side (Triggered by Mid)
+                    side *= lin_gain;
+                }
+                else if (p_ms_mode == 4) { // S>M Mode: Compress Mid (Triggered by Side)
+                    mid *= lin_gain;
+                }
+
+                // Decode M/S -> L/R
+                double out_l = mid + side;
+                double out_r = mid - side;
+                l[i] = (float)out_l;
+                r[i] = (float)out_r;
+
+                fb_prev_l = out_l; fb_prev_r = out_r;
+            }
         }
     }
 
-    void runDetector(double sc_in_l, double sc_in_r)
+    void runDetector(double s_l, double s_r)
     {
-        double s_l = sc_in_l;
-        double s_r = sc_in_r;
-
-        if (p_active_det)
-        {
-            s_l = sc_hp_l.process(s_l);
-            s_r = sc_hp_r.process(s_r);
-            if (p_thrust_mode > 0) {
-                s_l = sc_shelf_l.process(s_l);
-                s_r = sc_shelf_r.process(s_r);
-            }
-        }
-
         double det_l_raw = 0.0, det_r_raw = 0.0;
+
         if (use_rms) {
             const double pL = s_l * s_l;
             const double pR = s_r * s_r;
@@ -455,7 +530,11 @@ private:
 
         const double det_avg = std::sqrt(0.5 * (det_l_raw * det_l_raw + det_r_raw * det_r_raw));
         const double det_max = std::max(det_l_raw, det_r_raw);
-        const double det = det_avg * (1.0 - stereo_link) + det_max * stereo_link;
+
+        double det = det_max;
+        if (p_ms_mode == 0) {
+            det = det_avg * (1.0 - stereo_link) + det_max * stereo_link;
+        }
 
         // TRANSIENT
         double eff_thresh_db = thresh_sm;
@@ -580,15 +659,11 @@ private:
 
         const float satMix01 = juce::jlimit(0.0f, 100.0f, p_sat_mix) * 0.01f;
 
-        // NEW: PRE GAIN SMOOTHING
+        // PRE GAIN
         sat_pre_lin_sm = smooth1p(sat_pre_lin_sm, sat_pre_lin_target, smooth_alpha_block);
-
-        // Drive Smoothing Update
         sat_drive_lin_sm = smooth1p(sat_drive_lin_sm, sat_drive_lin_target, smooth_alpha_block);
 
         const float pre_gain = (float)sat_pre_lin_sm;
-
-        // Apply Pre-Gain
         if (p_active_sat) {
             for (int ch = 0; ch < nCh; ++ch) {
                 float* x = io.getWritePointer(ch);
@@ -611,12 +686,8 @@ private:
         auto block = juce::dsp::AudioBlock<float>(io);
         auto osBlock = os->processSamplesUp(block);
         const int mode = p_sat_mode;
-
         const double drive = (double)sat_drive_lin_sm;
-
         const int osN = (int)osBlock.getNumSamples();
-
-        // NULL TEST FIX: Strict bypass check
         const bool eq_tone_active = p_active_eq && (std::abs(p_sat_tone) > 0.01f);
         const bool eq_bright_active = p_active_eq && (std::abs(p_harm_bright) > 0.01f);
 
@@ -631,24 +702,19 @@ private:
             for (int i = 0; i < osN; ++i)
             {
                 double s = (double)data[i];
-
-                // NULL FIX: Check bypass if gain is near zero
                 if (eq_bright_active) s = pre.process(s);
 
                 if (p_active_sat) {
                     s *= drive;
-                    if (mode == 1) { // IRON - Fixed Unbounded Polynomial
+                    if (mode == 1) {
                         const double bias = 0.075;
                         const double y0 = std::tanh(bias);
                         const double y = std::tanh(s + bias) - y0;
-
-                        // FIX: Clamp input to cubic term
                         const double s_sat = std::tanh(s);
                         const double poly = s_sat - (s_sat * s_sat * s_sat) * 0.333333333333;
-
                         s = 0.82 * y + 0.18 * poly;
                     }
-                    else if (mode == 2) { // STEEL
+                    else if (mode == 2) {
                         phi = phi * steel_leak_coeff + s * steel_dt;
                         const double y = std::tanh(phi * 7.0);
                         double dy = (y - yPrev) * steel_dy_gain;
@@ -659,7 +725,6 @@ private:
                     }
                 }
 
-                // NULL FIX: Check bypass
                 if (eq_bright_active) s = post.process(s);
                 data[i] = (float)s;
             }
@@ -721,17 +786,13 @@ private:
             {
                 double s = (double)y[i];
                 if (p_active_sat) s *= trim;
-
-                // Safety Clipper (Soft Limit)
-                if (p_active_sat) s = std::tanh(s);
-
-                // NULL FIX: Check bypass
+                if (p_active_sat) s = std::tanh(s); // Safety
                 if (eq_tone_active) s = tone.process(s);
                 y[i] = (float)s;
             }
         }
 
-        // Clean Mix (Phase Aligned)
+        // Clean Mix
         if (p_active_sat)
         {
             for (int ch = 0; ch < nCh; ++ch) {
@@ -757,7 +818,11 @@ private:
 
     juce::dsp::DelayLine<float> satInternalDelay{ 4096 };
 
-    SimpleBiquad sc_hp_l, sc_hp_r, sc_shelf_l, sc_shelf_r;
+    // EQ Filters
+    SimpleBiquad sc_hp_l, sc_hp_r;
+    SimpleBiquad sc_lp_l, sc_lp_r; // Added LPF
+    SimpleBiquad sc_shelf_l, sc_shelf_r;
+
     SimpleBiquad sat_tone_l, sat_tone_r, harm_pre_l, harm_pre_r, harm_post_l, harm_post_r;
     SimpleBiquad iron_voicing_l, iron_voicing_r, steel_low_l, steel_low_r, steel_high_l, steel_high_r;
 
@@ -808,5 +873,5 @@ private:
     int last_sat_mode = -1;
     int last_ctrl_mode = -1;
 
-    juce::AudioBuffer<float> dry_buf, wet_buf, sat_clean_buf;
+    juce::AudioBuffer<float> dry_buf, wet_buf, sat_clean_buf, sc_internal_buf;
 };

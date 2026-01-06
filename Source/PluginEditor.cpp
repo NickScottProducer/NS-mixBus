@@ -9,7 +9,6 @@
 #include <cmath>
 
 //=============================================================================
-// Utility
 static inline juce::Rectangle<float> shrinkToSquare(juce::Rectangle<float> r)
 {
     const auto centre = r.getCentre();
@@ -24,7 +23,7 @@ static inline juce::Rectangle<float> shrinkToSquare(juce::Rectangle<float> r)
 class UltimateCompAudioProcessorEditor::UltimateLNF final : public juce::LookAndFeel_V4
 {
 public:
-    UltimateLNF()
+    explicit UltimateLNF(bool inverse = false) : isInverse(inverse)
     {
         setColour(juce::Slider::thumbColourId, juce::Colours::transparentBlack);
         setColour(juce::ComboBox::backgroundColourId, c(bgA));
@@ -34,7 +33,6 @@ public:
         setColour(juce::ToggleButton::textColourId, c(text));
         setColour(juce::PopupMenu::backgroundColourId, c(bgB));
         setColour(juce::PopupMenu::textColourId, c(text));
-        // Label editing colors
         setColour(juce::Label::backgroundColourId, c(bgB));
         setColour(juce::Label::textColourId, c(accent));
         setColour(juce::Label::outlineColourId, c(accent));
@@ -43,66 +41,73 @@ public:
         setColour(juce::TextEditor::highlightColourId, c(accent).withAlpha(0.4f));
     }
 
-    enum Palette
-    {
-        bgA, bgB, panel, panel2, edge, text, text2, accent, accent2, ok, warn, white, line
-    };
+    enum Palette { bgA, bgB, panel, panel2, edge, text, text2, accent, accent2, ok, warn, white, line };
 
-    static juce::Colour c(Palette p)
+    juce::Colour c(Palette p)
     {
-        switch (p)
-        {
-        case bgA:     return juce::Colour(0xff0a0910); // Deep Void
-        case bgB:     return juce::Colour(0xff14121d); // Dark Purple base
-        case panel:   return juce::Colour(0x00000000); // Transparent Body
-        case panel2:  return juce::Colour(0xff110f18); // Darker recess
-        case edge:    return juce::Colour(0xff382e4d); // Purple rim
-        case text:    return juce::Colour(0xffe6e1ff); // White-purple
-        case text2:   return juce::Colour(0xff9085ad); // Dim purple
-        case accent:  return juce::Colour(0xffbd00ff); // NEON PURPLE
-        case accent2: return juce::Colour(0xffd966ff); // Lighter Neon
-        case ok:      return juce::Colour(0xff00f2ff); // Cyan (for meters)
-        case warn:    return juce::Colour(0xffff0055); // Hot Pink (Warning)
-        case white:   return juce::Colours::white;
-        case line:    return juce::Colour(0xff2a2438); // Blueprint Grid Line
+        if (isInverse) {
+            switch (p) {
+            case bgA:     return juce::Colour(0xfff5f5f5);
+            case bgB:     return juce::Colour(0xffffffff);
+            case panel:   return juce::Colour(0x00000000);
+            case panel2:  return juce::Colour(0xffe0e0e0);
+            case edge:    return juce::Colour(0xffb0b0b0);
+            case text:    return juce::Colour(0xff101010);
+            case text2:   return juce::Colour(0xff606060);
+            case accent:  return juce::Colour(0xffbd00ff);
+            case accent2: return juce::Colour(0xffd966ff);
+            case ok:      return juce::Colour(0xff00a0aa);
+            case warn:    return juce::Colour(0xffcc0044);
+            case white:   return juce::Colour(0xff000000);
+            case line:    return juce::Colour(0xffcccccc);
+            }
         }
-        return juce::Colours::white;
+        else {
+            switch (p) {
+            case bgA:     return juce::Colour(0xff0a0910);
+            case bgB:     return juce::Colour(0xff14121d);
+            case panel:   return juce::Colour(0x00000000);
+            case panel2:  return juce::Colour(0xff110f18);
+            case edge:    return juce::Colour(0xff382e4d);
+            case text:    return juce::Colour(0xffe6e1ff);
+            case text2:   return juce::Colour(0xff9085ad);
+            case accent:  return juce::Colour(0xffbd00ff);
+            case accent2: return juce::Colour(0xffd966ff);
+            case ok:      return juce::Colour(0xff00f2ff);
+            case warn:    return juce::Colour(0xffff0055);
+            case white:   return juce::Colours::white;
+            case line:    return juce::Colour(0xff2a2438);
+            }
+        }
+        return juce::Colours::red;
     }
 
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-        float sliderPosProportional, float rotaryStartAngle, float rotaryEndAngle,
-        juce::Slider&) override
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height, float sliderPosProportional, float rotaryStartAngle, float rotaryEndAngle, juce::Slider&) override
     {
         auto bounds = shrinkToSquare(juce::Rectangle<float>((float)x, (float)y, (float)width, (float)height)).reduced(2.0f);
         const float radius = bounds.getWidth() * 0.5f;
         const auto centre = bounds.getCentre();
         const float angle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
 
-        // Track
         const float trackWidth = 4.0f;
         juce::Path track;
-        track.addCentredArc(centre.x, centre.y, radius - trackWidth, radius - trackWidth,
-            0.0f, rotaryStartAngle, rotaryEndAngle, true);
-        g.setColour(c(panel2).darker(0.5f));
+        track.addCentredArc(centre.x, centre.y, radius - trackWidth, radius - trackWidth, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
+        g.setColour(c(panel2).darker(0.3f));
         g.strokePath(track, juce::PathStrokeType(trackWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-        // Value Arc
         juce::Path val;
-        val.addCentredArc(centre.x, centre.y, radius - trackWidth, radius - trackWidth,
-            0.0f, rotaryStartAngle, angle, true);
-        g.setColour(c(accent).withAlpha(0.3f)); // Glow
+        val.addCentredArc(centre.x, centre.y, radius - trackWidth, radius - trackWidth, 0.0f, rotaryStartAngle, angle, true);
+        g.setColour(c(accent).withAlpha(0.3f));
         g.strokePath(val, juce::PathStrokeType(trackWidth + 4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        g.setColour(c(accent)); // Core
+        g.setColour(c(accent));
         g.strokePath(val, juce::PathStrokeType(trackWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-        // Body
         float knobR = radius - 10.0f;
         g.setColour(c(bgA).withAlpha(0.8f));
         g.fillEllipse(centre.x - knobR, centre.y - knobR, knobR * 2.0f, knobR * 2.0f);
         g.setColour(c(edge));
         g.drawEllipse(centre.x - knobR, centre.y - knobR, knobR * 2.0f, knobR * 2.0f, 1.5f);
 
-        // Dot
         float dotR = 3.0f;
         float dotDist = knobR - 5.0f;
         float dotX = centre.x + std::cos(angle - juce::MathConstants<float>::halfPi) * dotDist;
@@ -114,49 +119,36 @@ public:
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool, bool) override
     {
         if (b.getButtonText().isEmpty()) return;
-
         auto r = b.getLocalBounds().toFloat().reduced(2.0f);
-        // Small square logic: if text is very short (like "F" or "Auto") OR specifically designated
-        // Here we assume anything longer than 4 chars implies the "Faster/Harder" slider style, 
-        // while "Auto" (4 chars) or "F" uses the small rect style.
         bool isSmall = b.getButtonText().length() <= 4;
-
         const float boxW = isSmall ? r.getWidth() : 32.0f;
         auto box = r;
-
         if (!isSmall) {
             const float stdH = 16.0f;
             box = r.withWidth(boxW).withHeight(stdH).withY(r.getCentreY() - stdH / 2);
         }
-
         bool on = b.getToggleState();
-
         g.setColour(c(panel2));
         g.fillRoundedRectangle(box, 4.0f);
         g.setColour(c(edge));
         g.drawRoundedRectangle(box, 4.0f, 1.0f);
-
         if (on) {
             g.setColour(c(accent).withAlpha(0.2f));
             g.fillRoundedRectangle(box, 4.0f);
             g.setColour(c(accent));
             g.drawRoundedRectangle(box, 4.0f, 1.0f);
         }
-
         if (!isSmall) {
-            // Slider style toggle (Text next to switch)
             float indSize = 10.0f;
             auto ind = box.withSizeKeepingCentre(indSize, indSize);
             if (on) ind.translate(8.0f, 0.0f); else ind.translate(-8.0f, 0.0f);
             g.setColour(on ? c(accent) : c(text2));
             g.fillEllipse(ind);
-
             g.setColour(c(text));
             g.setFont(juce::FontOptions(13.0f));
             g.drawFittedText(b.getButtonText(), r.withTrimmedLeft(boxW + 8.0f).toNearestInt(), juce::Justification::centredLeft, 1);
         }
         else {
-            // Text only (Small Square/Rect for "Auto" or "F")
             g.setColour(on ? c(white) : c(text2));
             g.setFont(juce::FontOptions(11.0f).withStyle("bold"));
             g.drawFittedText(b.getButtonText(), box.toNearestInt(), juce::Justification::centred, 1);
@@ -170,19 +162,17 @@ public:
         g.fillRoundedRectangle(r, 4.0f);
         g.setColour(c(edge));
         g.drawRoundedRectangle(r, 4.0f, 1.0f);
-
         auto arrow = r.removeFromRight(20.0f);
         juce::Path p;
-        p.addTriangle(arrow.getCentreX() - 3, arrow.getCentreY() - 2,
-            arrow.getCentreX() + 3, arrow.getCentreY() - 2,
-            arrow.getCentreX(), arrow.getCentreY() + 3);
+        p.addTriangle(arrow.getCentreX() - 3, arrow.getCentreY() - 2, arrow.getCentreX() + 3, arrow.getCentreY() - 2, arrow.getCentreX(), arrow.getCentreY() + 3);
         g.setColour(c(accent));
         g.fillPath(p);
     }
+
+private:
+    bool isInverse;
 };
 
-//=============================================================================
-// KNOB COMPONENT
 //=============================================================================
 class UltimateCompAudioProcessorEditor::Knob final : public juce::Component
 {
@@ -197,52 +187,37 @@ public:
 
         valueLabel.setJustificationType(juce::Justification::centred);
         valueLabel.setEditable(false, true, false);
-        valueLabel.setColour(juce::Label::textColourId, UltimateLNF::c(UltimateLNF::accent));
-        valueLabel.setColour(juce::TextEditor::textColourId, UltimateLNF::c(UltimateLNF::white));
-        valueLabel.setColour(juce::TextEditor::backgroundColourId, UltimateLNF::c(UltimateLNF::bgB));
+        valueLabel.setLookAndFeel(&lnf);
 
-        valueLabel.onTextChange = [this] {
-            float val = valueLabel.getText().getFloatValue();
-            slider.setValue(val, juce::sendNotification);
-            };
+        valueLabel.setColour(juce::Label::textColourId, lnf.c(UltimateLNF::accent));
+        valueLabel.setColour(juce::TextEditor::textColourId, lnf.c(UltimateLNF::white));
+        valueLabel.setColour(juce::TextEditor::backgroundColourId, lnf.c(UltimateLNF::bgB));
+
+        valueLabel.onTextChange = [this] { float val = valueLabel.getText().getFloatValue(); slider.setValue(val, juce::sendNotification); };
         addAndMakeVisible(valueLabel);
-
-        slider.onValueChange = [this] {
-            updateLabelText();
-            if (onValChange) onValChange();
-            };
+        slider.onValueChange = [this] { updateLabelText(); if (onValChange) onValChange(); };
     }
-
-    ~Knob() override { slider.setLookAndFeel(nullptr); }
-
+    ~Knob() override { slider.setLookAndFeel(nullptr); valueLabel.setLookAndFeel(nullptr); }
     juce::Slider& getSlider() noexcept { return slider; }
     void setUnitSuffix(juce::String s) { suffix = std::move(s); }
     void setTextFromValue(std::function<juce::String(double)> fn) { textFromValue = std::move(fn); }
-
     std::function<void()> onValChange;
-
-    void updateLabelText()
-    {
+    void updateLabelText() {
         double v = slider.getValue();
         juce::String s = textFromValue ? textFromValue(v) : slider.getTextFromValue(v);
         if (suffix.isNotEmpty() && !s.contains(suffix)) s << suffix;
         valueLabel.setText(s, juce::dontSendNotification);
     }
-
-    void paint(juce::Graphics& g) override
-    {
+    void paint(juce::Graphics& g) override {
         auto b = getLocalBounds();
         const int textH = juce::jlimit(12, 20, (int)std::lround(getHeight() * 0.18f));
         auto top = b.removeFromTop(textH);
-
         const float fontPx = juce::jlimit(10.0f, 15.0f, (float)textH * 0.80f);
-        g.setColour(UltimateLNF::c(UltimateLNF::text2));
+        g.setColour(lnf.c(UltimateLNF::text2));
         g.setFont(juce::FontOptions(fontPx));
         g.drawFittedText(labelTitle, top, juce::Justification::centred, 1);
     }
-
-    void resized() override
-    {
+    void resized() override {
         const int textH = juce::jlimit(12, 20, (int)std::lround(getHeight() * 0.18f));
         auto r = getLocalBounds();
         r.removeFromTop(textH);
@@ -251,7 +226,6 @@ public:
         valueLabel.setFont(juce::FontOptions(juce::jlimit(10.0f, 15.0f, (float)textH * 0.80f)));
         slider.setBounds(r.reduced(2));
     }
-
 private:
     UltimateLNF& lnf;
     juce::String labelTitle, suffix;
@@ -264,29 +238,27 @@ private:
 class UltimateCompAudioProcessorEditor::Panel final : public juce::Component
 {
 public:
-    Panel(juce::String titleText) : title(std::move(titleText)) {}
+    Panel(juce::String titleText, UltimateLNF& lookAndFeel)
+        : title(std::move(titleText)), lnf(lookAndFeel) {
+    }
 
     void setHeaderHeight(int h) { headerH = juce::jmax(0, h); repaint(); }
-    int getHeaderHeight() const noexcept { return headerH; }
     juce::Rectangle<int> getContentBounds() const { return getLocalBounds().reduced(8).withTrimmedTop(headerH); }
-
-    void paint(juce::Graphics& g) override
-    {
+    void paint(juce::Graphics& g) override {
         auto r = getLocalBounds().toFloat().reduced(1.0f);
-        g.setColour(UltimateLNF::c(UltimateLNF::edge));
+        g.setColour(lnf.c(UltimateLNF::bgA).withAlpha(0.95f));
+        g.fillRoundedRectangle(r, 6.0f);
+        g.setColour(lnf.c(UltimateLNF::edge));
         g.drawRoundedRectangle(r, 6.0f, 1.5f);
-
         if (headerH > 0) {
             auto header = r.removeFromTop((float)headerH);
-            g.setColour(UltimateLNF::c(UltimateLNF::bgB).withAlpha(0.6f));
+            g.setColour(lnf.c(UltimateLNF::bgB).withAlpha(0.6f));
             g.fillRoundedRectangle(header.getX(), header.getY(), header.getWidth(), header.getHeight(), 6.0f);
-
-            g.setColour(UltimateLNF::c(UltimateLNF::text));
+            g.setColour(lnf.c(UltimateLNF::text));
             const float headerFontPx = juce::jlimit(11.0f, 18.0f, header.getHeight() * 0.55f);
             g.setFont(juce::FontOptions(headerFontPx).withStyle("bold"));
             g.drawText(title, header.reduced(10, 0), juce::Justification::centred);
-
-            g.setColour(UltimateLNF::c(UltimateLNF::edge));
+            g.setColour(lnf.c(UltimateLNF::edge));
             g.drawHorizontalLine((int)header.getBottom(), header.getX(), header.getRight());
         }
     }
@@ -294,72 +266,63 @@ public:
 private:
     juce::String title;
     int headerH = 26;
+    UltimateLNF& lnf;
 };
 
 //=============================================================================
-// EDITOR IMPLEMENTATION
-//=============================================================================
-
 UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
-    lnf = std::make_unique<UltimateLNF>();
+    lnf = std::make_unique<UltimateLNF>(false);
+
+    // LOAD LOGO: Ensure 'logo.png' is added to Projucer BinaryData!
+    pluginLogo = juce::ImageCache::getFromMemory(BinaryData::logo_png, BinaryData::logo_pngSize);
+
     setLookAndFeel(lnf.get());
 
-    auto makeKnob = [this](const juce::String& name) {
-        auto k = std::make_unique<Knob>(*lnf, name);
+    auto makeKnob = [&](const juce::String& name, UltimateLNF& theme) {
+        auto k = std::make_unique<Knob>(theme, name);
         k->onValChange = [k = k.get()] { k->updateLabelText(); };
         return k;
         };
 
     // --- 1. Create Knobs ---
-    kThresh = makeKnob("Threshold"); kThresh->setUnitSuffix("dB");
-    kRatio = makeKnob("Ratio"); kRatio->setTextFromValue([](double v) { return juce::String(v, 1) + ":1"; });
-    kKnee = makeKnob("Knee"); kKnee->setUnitSuffix("dB");
+    kThresh = makeKnob("Threshold", *lnf); kThresh->setUnitSuffix("dB");
+    kRatio = makeKnob("Ratio", *lnf); kRatio->setTextFromValue([](double v) { return juce::String(v, 1) + ":1"; });
+    kKnee = makeKnob("Knee", *lnf); kKnee->setUnitSuffix("dB");
+    kAttack = makeKnob("Attack", *lnf);
+    kAttack->setTextFromValue([this](double v) { return juce::String(bTurboAtt.getToggleState() ? (v * 0.1) : v, 2) + " ms"; });
+    kRelease = makeKnob("Release", *lnf);
+    kRelease->setTextFromValue([this](double v) { return juce::String(bTurboRel.getToggleState() ? (v * 0.1) : v, 2) + " ms"; });
+    kMakeup = makeKnob("Output", *lnf); kMakeup->setUnitSuffix("dB");
+    kMix = makeKnob("Mix", *lnf); kMix->setUnitSuffix("%");
 
-    kAttack = makeKnob("Attack");
-    kAttack->setTextFromValue([this](double v) {
-        double val = bTurboAtt.getToggleState() ? (v * 0.1) : v;
-        return juce::String(val, 2) + " ms";
-        });
+    // Sidechain Knobs
+    kScHpf = makeKnob("Low Cut", *lnf); kScHpf->setUnitSuffix("Hz");
+    kScLpf = makeKnob("High Cut", *lnf); kScLpf->setUnitSuffix("Hz"); // High Cut
+    kDetRms = makeKnob("RMS Window", *lnf); kDetRms->setUnitSuffix("ms");
+    kStereoLink = makeKnob("Link", *lnf); kStereoLink->setUnitSuffix("%");
+    kFbBlend = makeKnob("FB Blend", *lnf); kFbBlend->setUnitSuffix("%");
 
-    kRelease = makeKnob("Release");
-    kRelease->setTextFromValue([this](double v) {
-        double val = bTurboRel.getToggleState() ? (v * 0.1) : v;
-        return juce::String(val, 2) + " ms";
-        });
+    kCrestTarget = makeKnob("Crest Target", *lnf); kCrestTarget->setUnitSuffix("dB");
+    kCrestSpeed = makeKnob("Crest Speed", *lnf); kCrestSpeed->setUnitSuffix("ms");
+    kTpAmt = makeKnob("Focus", *lnf); kTpAmt->setUnitSuffix("%");
+    kTpRaise = makeKnob("Punch", *lnf); kTpRaise->setUnitSuffix("dB");
+    kFluxAmt = makeKnob("Flux Amt", *lnf); kFluxAmt->setUnitSuffix("%");
+    kSatPre = makeKnob("Pre-Gain", *lnf); kSatPre->setUnitSuffix("dB");
+    kSatDrive = makeKnob("Drive", *lnf); kSatDrive->setUnitSuffix("dB");
+    kSatTrim = makeKnob("Trim", *lnf); kSatTrim->setUnitSuffix("dB");
+    kSatMix = makeKnob("Mix", *lnf); kSatMix->setUnitSuffix("%");
+    kTone = makeKnob("Tilt", *lnf); kTone->setUnitSuffix("dB");
+    kToneFreq = makeKnob("Freq", *lnf); kToneFreq->setUnitSuffix("Hz");
+    kBright = makeKnob("Air", *lnf); kBright->setUnitSuffix("dB");
+    kBrightFreq = makeKnob("Freq", *lnf); kBrightFreq->setUnitSuffix("Hz");
 
-    // OUTPUT KNOB (Renamed from Makeup)
-    kMakeup = makeKnob("Output"); kMakeup->setUnitSuffix("dB");
-
-    kMix = makeKnob("Mix"); kMix->setUnitSuffix("%");
-
-    kScHpf = makeKnob("SC HPF"); kScHpf->setUnitSuffix("Hz");
-    kDetRms = makeKnob("RMS Win"); kDetRms->setUnitSuffix("ms");
-    kStereoLink = makeKnob("Link"); kStereoLink->setUnitSuffix("%");
-    kFbBlend = makeKnob("FB Blend"); kFbBlend->setUnitSuffix("%");
-
-    kCrestTarget = makeKnob("Crest Tgt"); kCrestTarget->setUnitSuffix("dB");
-    kCrestSpeed = makeKnob("Crest Spd"); kCrestSpeed->setUnitSuffix("ms");
-
-    kTpAmt = makeKnob("TP Amt"); kTpAmt->setUnitSuffix("%");
-    kTpRaise = makeKnob("TP Raise"); kTpRaise->setUnitSuffix("dB");
-    kFluxAmt = makeKnob("Flux Amt"); kFluxAmt->setUnitSuffix("%");
-
-    kSatPre = makeKnob("Pre-Gain"); kSatPre->setUnitSuffix("dB");
-    kSatDrive = makeKnob("Drive"); kSatDrive->setUnitSuffix("dB");
-    kSatTrim = makeKnob("Trim"); kSatTrim->setUnitSuffix("dB");
-    kSatMix = makeKnob("Mix"); kSatMix->setUnitSuffix("%");
-
-    kTone = makeKnob("Tone"); kTone->setUnitSuffix("dB");
-    kToneFreq = makeKnob("Freq"); kToneFreq->setUnitSuffix("Hz");
-    kBright = makeKnob("Bright"); kBright->setUnitSuffix("dB");
-    kBrightFreq = makeKnob("Freq"); kBrightFreq->setUnitSuffix("Hz");
-
-    // --- 2. Setup Combos & Buttons ---
-    auto prepCombo = [&](juce::ComboBox& b) {
+    // --- 2. Combos & Buttons ---
+    auto prepCombo = [&](juce::ComboBox& b, UltimateLNF* theme = nullptr) {
         b.setJustificationType(juce::Justification::centred);
         b.setSize(90, 20);
+        if (theme) b.setLookAndFeel(theme);
         };
 
     prepCombo(cAutoRel); cAutoRel.addItem("Manual", 1); cAutoRel.addItem("Auto", 2);
@@ -371,27 +334,23 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     prepCombo(cSignalFlow); cSignalFlow.addItem("Comp>Sat", 1); cSignalFlow.addItem("Sat>Comp", 2);
     prepCombo(cSatAutoGain); cSatAutoGain.addItem("Off", 1); cSatAutoGain.addItem("Partial", 2); cSatAutoGain.addItem("Full", 3);
 
-    bTurboAtt.setButtonText("Faster/Harder");
-    bTurboAtt.setClickingTogglesState(true);
-    bTurboAtt.onClick = [this]() { kAttack->updateLabelText(); };
+    // SIDECHAIN INTEGRATED COMBOS
+    prepCombo(cScMode); cScMode.addItem("In", 1); cScMode.addItem("Ext", 2);
+    prepCombo(cMsMode); cMsMode.addItem("Link", 1); cMsMode.addItem("Mid", 2); cMsMode.addItem("Side", 3);
+    cMsMode.addItem("M>S", 4); cMsMode.addItem("S>M", 5);
 
-    bTurboRel.setButtonText("Faster/Harder");
-    bTurboRel.setClickingTogglesState(true);
-    bTurboRel.onClick = [this]() { kRelease->updateLabelText(); };
+    bTurboAtt.setButtonText("F"); bTurboAtt.setClickingTogglesState(true); bTurboAtt.onClick = [this] { kAttack->updateLabelText(); };
+    bTurboRel.setButtonText("F"); bTurboRel.setClickingTogglesState(true); bTurboRel.onClick = [this] { kRelease->updateLabelText(); };
+    bMirror.setButtonText("Mirror"); bMirror.setClickingTogglesState(true);
+    bAutoMakeup.setButtonText("Auto"); bAutoMakeup.setClickingTogglesState(true);
 
-    bMirror.setButtonText("Mirror");
-    bMirror.setClickingTogglesState(true);
-
-    bAutoMakeup.setButtonText("Auto");
-    bAutoMakeup.setClickingTogglesState(true);
-
-    // --- 3. Create & Add Panels ---
-    panelDyn = std::make_unique<Panel>("Main Dynamics");
-    panelDet = std::make_unique<Panel>("Sidechain");
-    panelCrest = std::make_unique<Panel>("Crest");
-    panelTpFlux = std::make_unique<Panel>("Transient/Flux");
-    panelSat = std::make_unique<Panel>("Saturation");
-    panelEq = std::make_unique<Panel>("Color EQ");
+    // --- 3. Panels ---
+    panelDyn = std::make_unique<Panel>("Main Dynamics", *lnf);
+    panelDet = std::make_unique<Panel>("Sidechain", *lnf);
+    panelCrest = std::make_unique<Panel>("Crest", *lnf);
+    panelTpFlux = std::make_unique<Panel>("Transient/Flux", *lnf);
+    panelSat = std::make_unique<Panel>("Saturation", *lnf);
+    panelEq = std::make_unique<Panel>("Color EQ", *lnf);
 
     addAndMakeVisible(*panelDyn);
     addAndMakeVisible(*panelDet);
@@ -400,14 +359,12 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     addAndMakeVisible(*panelSat);
     addAndMakeVisible(*panelEq);
 
-    // --- 4. Create & Add Buttons ---
+    // --- 4. Bypass Buttons ---
     auto setupPowerBtn = [&](juce::ToggleButton& b, juce::String paramId, std::unique_ptr<ButtonAttachment>& att) {
-        b.setButtonText("");
-        b.setClickingTogglesState(true);
+        b.setButtonText(""); b.setClickingTogglesState(true);
         att = std::make_unique<ButtonAttachment>(audioProcessor.apvts, paramId, b);
         addAndMakeVisible(b);
         };
-
     setupPowerBtn(bActiveDyn, "active_dyn", aActiveDyn);
     setupPowerBtn(bActiveDet, "active_det", aActiveDet);
     setupPowerBtn(bActiveCrest, "active_crest", aActiveCrest);
@@ -415,60 +372,49 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     setupPowerBtn(bActiveSat, "active_sat", aActiveSat);
     setupPowerBtn(bActiveEq, "active_eq", aActiveEq);
 
-    // --- 5. Add Controls to Panels ---
-    panelDyn->addAndMakeVisible(*kThresh); panelDyn->addAndMakeVisible(*kRatio);
-    panelDyn->addAndMakeVisible(*kKnee);
-
+    // --- 5. Add Children ---
+    panelDyn->addAndMakeVisible(*kThresh); panelDyn->addAndMakeVisible(*kRatio); panelDyn->addAndMakeVisible(*kKnee);
     panelDyn->addAndMakeVisible(*kAttack); panelDyn->addAndMakeVisible(bTurboAtt);
     panelDyn->addAndMakeVisible(*kRelease); panelDyn->addAndMakeVisible(bTurboRel);
-
     panelDyn->addAndMakeVisible(*kMakeup); panelDyn->addAndMakeVisible(bAutoMakeup);
-    panelDyn->addAndMakeVisible(*kMix);
-    panelDyn->addAndMakeVisible(cAutoRel);
+    panelDyn->addAndMakeVisible(*kMix); panelDyn->addAndMakeVisible(cAutoRel);
 
-    panelDet->addAndMakeVisible(*kScHpf); panelDet->addAndMakeVisible(*kDetRms);
+    // Sidechain Panel Children
+    panelDet->addAndMakeVisible(*kScHpf);
+    panelDet->addAndMakeVisible(*kScLpf); // High Cut
+    panelDet->addAndMakeVisible(*kDetRms);
     panelDet->addAndMakeVisible(*kStereoLink); panelDet->addAndMakeVisible(*kFbBlend);
     panelDet->addAndMakeVisible(cThrust);
+    panelDet->addAndMakeVisible(cScMode); // Added to panel
+    panelDet->addAndMakeVisible(cMsMode); // Added to panel
 
-    panelCrest->addAndMakeVisible(*kCrestTarget); panelCrest->addAndMakeVisible(*kCrestSpeed);
-    panelCrest->addAndMakeVisible(cCtrlMode);
+    panelCrest->addAndMakeVisible(*kCrestTarget); panelCrest->addAndMakeVisible(*kCrestSpeed); panelCrest->addAndMakeVisible(cCtrlMode);
+    panelTpFlux->addAndMakeVisible(*kTpAmt); panelTpFlux->addAndMakeVisible(*kTpRaise); panelTpFlux->addAndMakeVisible(*kFluxAmt);
+    panelTpFlux->addAndMakeVisible(cTpMode); panelTpFlux->addAndMakeVisible(cFluxMode);
 
-    panelTpFlux->addAndMakeVisible(*kTpAmt); panelTpFlux->addAndMakeVisible(*kTpRaise);
-    panelTpFlux->addAndMakeVisible(*kFluxAmt);
-    panelTpFlux->addAndMakeVisible(cTpMode);
-    panelTpFlux->addAndMakeVisible(cFluxMode);
-
-    panelSat->addAndMakeVisible(*kSatPre);
-    panelSat->addAndMakeVisible(*kSatDrive);
-    panelSat->addAndMakeVisible(*kSatTrim);
-    panelSat->addAndMakeVisible(*kSatMix);
-    panelSat->addAndMakeVisible(cSatMode);
-    panelSat->addAndMakeVisible(cSatAutoGain);
-    panelSat->addAndMakeVisible(cSignalFlow);
-    panelSat->addAndMakeVisible(bMirror);
+    panelSat->addAndMakeVisible(*kSatPre); panelSat->addAndMakeVisible(*kSatDrive); panelSat->addAndMakeVisible(*kSatTrim);
+    panelSat->addAndMakeVisible(*kSatMix); panelSat->addAndMakeVisible(cSatMode); panelSat->addAndMakeVisible(cSatAutoGain);
+    panelSat->addAndMakeVisible(cSignalFlow); panelSat->addAndMakeVisible(bMirror);
 
     panelEq->addAndMakeVisible(*kTone); panelEq->addAndMakeVisible(*kToneFreq);
     panelEq->addAndMakeVisible(*kBright); panelEq->addAndMakeVisible(*kBrightFreq);
 
-    // --- 6. Attachments ---
-    bindKnob(*kThresh, aThresh, "thresh", "dB"); bindKnob(*kRatio, aRatio, "ratio", "");
-    bindKnob(*kKnee, aKnee, "knee", "dB"); bindKnob(*kAttack, aAttack, "att_ms", "ms");
-    bindKnob(*kRelease, aRelease, "rel_ms", "ms"); bindKnob(*kMakeup, aMakeup, "makeup", "dB");
-    bindKnob(*kMix, aMix, "dry_wet", "%");
+    // --- 6. Bindings ---
+    bindKnob(*kThresh, aThresh, "thresh", "dB"); bindKnob(*kRatio, aRatio, "ratio", ""); bindKnob(*kKnee, aKnee, "knee", "dB");
+    bindKnob(*kAttack, aAttack, "att_ms", "ms"); bindKnob(*kRelease, aRelease, "rel_ms", "ms");
+    bindKnob(*kMakeup, aMakeup, "makeup", "dB"); bindKnob(*kMix, aMix, "dry_wet", "%");
 
-    bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz"); bindKnob(*kDetRms, aDetRms, "det_rms", "ms");
+    // SC Bindings
+    bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz");
+    bindKnob(*kScLpf, aScLpf, "sc_lp_freq", "Hz");
+    bindKnob(*kDetRms, aDetRms, "det_rms", "ms");
     bindKnob(*kStereoLink, aStereoLink, "stereo_link", "%"); bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%");
 
     bindKnob(*kCrestTarget, aCrestTarget, "crest_target", "dB"); bindKnob(*kCrestSpeed, aCrestSpeed, "crest_speed", "ms");
-
     bindKnob(*kTpAmt, aTpAmt, "tp_amount", "%"); bindKnob(*kTpRaise, aTpRaise, "tp_thresh_raise", "dB");
     bindKnob(*kFluxAmt, aFluxAmt, "flux_amount", "%");
-
-    bindKnob(*kSatPre, aSatPre, "sat_pre_gain", "dB");
-    bindKnob(*kSatDrive, aSatDrive, "sat_drive", "dB");
-    bindKnob(*kSatTrim, aSatTrim, "sat_trim", "dB");
-    bindKnob(*kSatMix, aSatMix, "sat_mix", "%");
-
+    bindKnob(*kSatPre, aSatPre, "sat_pre_gain", "dB"); bindKnob(*kSatDrive, aSatDrive, "sat_drive", "dB");
+    bindKnob(*kSatTrim, aSatTrim, "sat_trim", "dB"); bindKnob(*kSatMix, aSatMix, "sat_mix", "%");
     bindKnob(*kTone, aTone, "sat_tone", "dB"); bindKnob(*kToneFreq, aToneFreq, "sat_tone_freq", "Hz");
     bindKnob(*kBright, aBright, "harm_bright", "dB"); bindKnob(*kBrightFreq, aBrightFreq, "harm_freq", "Hz");
 
@@ -481,6 +427,9 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     initCombo(cSatAutoGain, aSatAutoGain, "sat_autogain");
     initCombo(cSignalFlow, aSignalFlow, "signal_flow");
 
+    initCombo(cScMode, cScModeAtt, "sc_mode");
+    initCombo(cMsMode, aMsMode, "ms_mode");
+
     aTurboAtt = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_att", bTurboAtt);
     aTurboRel = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_rel", bTurboRel);
     aMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sat_mirror", bMirror);
@@ -492,24 +441,20 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     startTimerHz(60);
 }
 
-UltimateCompAudioProcessorEditor::~UltimateCompAudioProcessorEditor()
-{
+UltimateCompAudioProcessorEditor::~UltimateCompAudioProcessorEditor() {
     stopTimer();
     setLookAndFeel(nullptr);
 }
 
-void UltimateCompAudioProcessorEditor::bindKnob(Knob& knob, std::unique_ptr<SliderAttachment>& attachment,
-    const juce::String& paramID, const juce::String& suffix)
+void UltimateCompAudioProcessorEditor::bindKnob(Knob& knob, std::unique_ptr<SliderAttachment>& attachment, const juce::String& paramID, const juce::String& suffix)
 {
     knob.getSlider().setName(paramID);
     attachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, paramID, knob.getSlider());
     knob.setUnitSuffix(suffix);
-    // Force initial label update
     knob.updateLabelText();
 }
 
-void UltimateCompAudioProcessorEditor::initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment,
-    const juce::String& paramID)
+void UltimateCompAudioProcessorEditor::initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment, const juce::String& paramID)
 {
     attachment = std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, paramID, box);
 }
@@ -521,99 +466,110 @@ void UltimateCompAudioProcessorEditor::timerCallback()
     if (audioProcessor.meterInR > smoothInR) smoothInR = audioProcessor.meterInR; else smoothInR *= decay;
     if (audioProcessor.meterOutL > smoothOutL) smoothOutL = audioProcessor.meterOutL; else smoothOutL *= decay;
     if (audioProcessor.meterOutR > smoothOutR) smoothOutR = audioProcessor.meterOutR; else smoothOutR *= decay;
-
     float gr = audioProcessor.meterGR;
     smoothGR = (gr < smoothGR) ? gr : (gr * 0.2f + smoothGR * 0.8f);
-
     float fl = audioProcessor.meterFlux;
     if (fl > smoothFlux) smoothFlux = fl; else smoothFlux *= 0.9f;
-
-    // CREST DEBUG SMOOTHING
     float cr = audioProcessor.meterCrest;
     if (cr > smoothCrest) smoothCrest = cr; else smoothCrest *= 0.9f;
-
     repaint();
 }
 
 void UltimateCompAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(UltimateLNF::c(UltimateLNF::bgA));
-    g.setGradientFill(juce::ColourGradient(UltimateLNF::c(UltimateLNF::bgA), 0, 0,
-        UltimateLNF::c(UltimateLNF::bgB), 0, (float)getHeight(), false));
+    g.fillAll(UltimateLNF(false).c(UltimateLNF::bgA));
+    g.setGradientFill(juce::ColourGradient(UltimateLNF(false).c(UltimateLNF::bgA), 0, 0, UltimateLNF(false).c(UltimateLNF::bgB), 0, (float)getHeight(), false));
     g.fillAll();
-
-    g.setColour(UltimateLNF::c(UltimateLNF::line).withAlpha(0.20f));
+    g.setColour(UltimateLNF(false).c(UltimateLNF::line).withAlpha(0.20f));
     for (int x = 0; x < getWidth(); x += 20) g.drawVerticalLine(x, 0.0f, (float)getHeight());
     for (int y = 0; y < getHeight(); y += 20) g.drawHorizontalLine(y, 0.0f, (float)getWidth());
 
-    g.setColour(UltimateLNF::c(UltimateLNF::text));
-    g.setFont(juce::FontOptions(22.0f).withStyle("bold"));
-    g.drawText("NS - MixBus", 20, 10, 200, 30, juce::Justification::left);
+    // --- DRAW COMPOSITE LOGO (Image + Text) ---
+    const int headerX = 15;
+    const int headerY = 15;
+    const int logoSize = 60; // Increased logo size
+    const int gap = 10;      // Gap between logo and text
+    const int textHeight = 32; // Text height
+
+    if (pluginLogo.isValid())
+    {
+        // 1. Draw bigger, brighter logo
+        g.setOpacity(1.0f); // Ensure full brightness/opacity
+        g.drawImageWithin(pluginLogo,
+            headerX, headerY, logoSize, logoSize,
+            juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize,
+            false);
+
+        // 2. Draw "mixBus" text to the right
+        g.setColour(UltimateLNF(false).c(UltimateLNF::text)); // Use main light text color
+        g.setFont(juce::FontOptions((float)textHeight).withStyle("bold"));
+
+        // Calculate text position relative to logo to center it vertically
+        int textX = headerX + logoSize + gap;
+        int textY = headerY + (logoSize - textHeight) / 2;
+        int textW = 200; // Plenty of space for text
+
+        g.drawText("mixBus", textX, textY, textW, textHeight, juce::Justification::left);
+    }
+    else
+    {
+        // Fallback if image load fails
+        g.setColour(UltimateLNF(false).c(UltimateLNF::text));
+        g.setFont(juce::FontOptions(22.0f).withStyle("bold"));
+        g.drawText("NS - MixBus", 20, 10, 200, 30, juce::Justification::left);
+    }
 }
 
 void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
+    auto lnfStd = UltimateLNF(false);
+
     auto drawHugeMeter = [&](juce::Rectangle<int> r, float L, float R, juce::String label) {
-        g.setColour(UltimateLNF::c(UltimateLNF::panel2).withAlpha(0.9f));
+        g.setColour(lnfStd.c(UltimateLNF::panel2).withAlpha(0.9f));
         g.fillRoundedRectangle(r.toFloat(), 6.0f);
-        g.setColour(UltimateLNF::c(UltimateLNF::edge));
+        g.setColour(lnfStd.c(UltimateLNF::edge));
         g.drawRoundedRectangle(r.toFloat(), 6.0f, 1.5f);
-
-        int w = r.getWidth() - 35;
-        int h = r.getHeight() / 2 - 2;
-        int barX = r.getX() + 30;
-        int barY = r.getY() + 2;
-
-        g.setColour(UltimateLNF::c(UltimateLNF::ok));
-        int fillL = (int)(w * juce::jlimit(0.0f, 1.0f, L * 1.5f));
-        g.fillRect(barX, barY, fillL, h);
-        int fillR = (int)(w * juce::jlimit(0.0f, 1.0f, R * 1.5f));
-        g.fillRect(barX, barY + h + 2, fillR, h);
-
-        g.setColour(UltimateLNF::c(UltimateLNF::text));
+        int w = r.getWidth() - 35; int h = r.getHeight() / 2 - 2;
+        int barX = r.getX() + 30; int barY = r.getY() + 2;
+        g.setColour(lnfStd.c(UltimateLNF::ok));
+        g.fillRect(barX, barY, (int)(w * juce::jlimit(0.0f, 1.0f, L * 1.5f)), h);
+        g.fillRect(barX, barY + h + 2, (int)(w * juce::jlimit(0.0f, 1.0f, R * 1.5f)), h);
+        g.setColour(lnfStd.c(UltimateLNF::text));
         g.setFont(juce::FontOptions(11.0f).withStyle("bold"));
         g.drawText(label, r.getX(), r.getY(), 30, r.getHeight(), juce::Justification::centred);
         };
-
     drawHugeMeter(inMeterArea, smoothInL, smoothInR, "IN");
     drawHugeMeter(outMeterArea, smoothOutL, smoothOutR, "OUT");
 
     if (!grBarArea.isEmpty()) {
-        g.setColour(UltimateLNF::c(UltimateLNF::panel2));
+        g.setColour(lnfStd.c(UltimateLNF::panel2));
         g.fillRoundedRectangle(grBarArea.toFloat(), 6.0f);
-
         float grInv = std::abs(smoothGR);
         float w = (float)grBarArea.getWidth() * (juce::jlimit(0.0f, 24.0f, grInv) / 24.0f);
-
         if (w > 1.0f) {
             juce::Graphics::ScopedSaveState ss(g);
             g.reduceClipRegion((int)(grBarArea.getRight() - w), grBarArea.getY(), (int)w, grBarArea.getHeight());
-            g.setColour(UltimateLNF::c(UltimateLNF::warn));
-            for (int i = -20; i < (int)w + 20; i += 6) {
-                g.drawLine((float)(grBarArea.getRight() - w + i), (float)grBarArea.getBottom(),
-                    (float)(grBarArea.getRight() - w + i + 4), (float)grBarArea.getY(), 2.0f);
-            }
+            g.setColour(lnfStd.c(UltimateLNF::warn));
+            g.fillRect(grBarArea);
         }
-
-        g.setColour(UltimateLNF::c(UltimateLNF::white));
+        g.setColour(lnfStd.c(UltimateLNF::white));
         g.setFont(juce::FontOptions(16.0f).withStyle("bold"));
         g.drawText(juce::String(smoothGR, 1) + " dB", grBarArea, juce::Justification::centred);
-        g.setColour(UltimateLNF::c(UltimateLNF::text2));
+        g.setColour(lnfStd.c(UltimateLNF::text2));
         g.setFont(juce::FontOptions(12.0f));
         g.drawText("GR", grBarArea.getX() - 30, grBarArea.getY(), 25, grBarArea.getHeight(), juce::Justification::right);
     }
 
     auto r = fluxDotArea.toFloat();
-    g.setColour(UltimateLNF::c(UltimateLNF::panel2));
+    g.setColour(lnfStd.c(UltimateLNF::panel2));
     g.fillEllipse(r);
     if (smoothFlux > 0.01f) {
-        g.setColour(UltimateLNF::c(UltimateLNF::warn).withAlpha(juce::jlimit(0.2f, 1.0f, smoothFlux)));
+        g.setColour(lnfStd.c(UltimateLNF::warn).withAlpha(juce::jlimit(0.2f, 1.0f, smoothFlux)));
         g.fillEllipse(r.reduced(2));
     }
 
-    // CREST DEBUG DRAW
     if (!crestDotArea.isEmpty()) {
-        g.setColour(UltimateLNF::c(UltimateLNF::panel2));
+        g.setColour(lnfStd.c(UltimateLNF::panel2));
         g.fillEllipse(crestDotArea.toFloat());
         if (smoothCrest > 0.001f) {
             g.setColour(juce::Colours::red.withAlpha(juce::jlimit(0.2f, 1.0f, smoothCrest * 5.0f)));
@@ -623,51 +579,43 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         }
     }
 
-    // BYPASS POWER BUTTON DRAW
     auto drawPower = [&](juce::ToggleButton& b) {
         auto bR = b.getBounds().toFloat();
         bool on = b.getToggleState();
-        g.setColour(on ? UltimateLNF::c(UltimateLNF::ok) : UltimateLNF::c(UltimateLNF::text2).withAlpha(0.3f));
-        float cx = bR.getCentreX();
-        float cy = bR.getCentreY();
-        float rad = 5.0f;
-        juce::Path p;
-        p.addArc(cx - rad, cy - rad, rad * 2, rad * 2, 0.5f, 5.8f, true);
+        g.setColour(on ? lnfStd.c(UltimateLNF::ok) : lnfStd.c(UltimateLNF::text2).withAlpha(0.3f));
+        float cx = bR.getCentreX(); float cy = bR.getCentreY(); float rad = 5.0f;
+        juce::Path p; p.addArc(cx - rad, cy - rad, rad * 2, rad * 2, 0.5f, 5.8f, true);
         g.strokePath(p, juce::PathStrokeType(1.5f));
         g.drawLine(cx, cy - rad, cx, cy - rad + 4.0f, 1.5f);
-        if (on) {
-            g.setColour(UltimateLNF::c(UltimateLNF::ok).withAlpha(0.4f));
-            g.fillEllipse(cx - rad, cy - rad, rad * 2, rad * 2);
-        }
+        if (on) { g.setColour(lnfStd.c(UltimateLNF::ok).withAlpha(0.4f)); g.fillEllipse(cx - rad, cy - rad, rad * 2, rad * 2); }
         };
     drawPower(bActiveDyn); drawPower(bActiveDet); drawPower(bActiveCrest);
     drawPower(bActiveTpFlux); drawPower(bActiveSat); drawPower(bActiveEq);
 
     auto drawLabel = [&](juce::Component& c, juce::String text) {
         if (auto* p = c.getParentComponent()) {
+            if (!c.isVisible()) return;
             auto r = c.getBoundsInParent();
             auto rEditor = r + p->getPosition();
-            g.setColour(UltimateLNF::c(UltimateLNF::text2));
+
+            g.setColour(lnfStd.c(UltimateLNF::text2));
             g.setFont(juce::FontOptions(10.0f).withStyle("bold"));
             juce::Rectangle<int> labelRect(rEditor.getX(), rEditor.getY() - 12, rEditor.getWidth(), 12);
             g.drawText(text, labelRect, juce::Justification::centred);
         }
         };
+    drawLabel(cAutoRel, "RELEASE"); drawLabel(cThrust, "THRUST"); drawLabel(cCtrlMode, "CONTROL");
+    drawLabel(cFluxMode, "FLUX"); drawLabel(cTpMode, "Priority"); drawLabel(cSatMode, "TRANSFORMER");
+    drawLabel(cSatAutoGain, "AUTOGAIN"); drawLabel(cSignalFlow, "FLOW");
 
-    drawLabel(cAutoRel, "RELEASE");
-    drawLabel(cThrust, "THRUST");
-    drawLabel(cCtrlMode, "CONTROL");
-    drawLabel(cFluxMode, "FLUX");
-    drawLabel(cTpMode, "TRANSIENT");
-    drawLabel(cSatMode, "TRANSFORMER");
-    drawLabel(cSatAutoGain, "AUTOGAIN");
-    drawLabel(cSignalFlow, "FLOW");
+    // Labels for the integrated controls
+    drawLabel(cScMode, "INPUT");
+    drawLabel(cMsMode, "M/S ROUTING");
 }
 
 void UltimateCompAudioProcessorEditor::resized()
 {
-    constexpr float baseW = 1100.0f;
-    constexpr float baseH = 680.0f;
+    constexpr float baseW = 1100.0f; constexpr float baseH = 680.0f;
     const float s = juce::jlimit(0.75f, 2.0f, juce::jmin(getWidth() / baseW, getHeight() / baseH));
     auto si = [s](float v) -> int { return juce::jmax(1, (int)std::lround(v * s)); };
     const int outerPad = si(15.0f);
@@ -679,39 +627,24 @@ void UltimateCompAudioProcessorEditor::resized()
     panelSat->setHeaderHeight(headerH); panelEq->setHeaderHeight(headerH);
 
     auto topBar = r.removeFromTop(si(60.0f));
-    const int meterH = si(24.0f);
-    const int meterGap = si(6.0f);
+    const int meterH = si(24.0f); const int meterGap = si(6.0f);
     const int metersTotalWidth = juce::jmin(topBar.getWidth(), si(300.0f));
     auto centerMeters = topBar.withWidth(metersTotalWidth).withX((getWidth() - metersTotalWidth) / 2);
-    inMeterArea = centerMeters.removeFromTop(meterH);
-    centerMeters.removeFromTop(meterGap);
-    outMeterArea = centerMeters.removeFromTop(meterH);
+    inMeterArea = centerMeters.removeFromTop(meterH); centerMeters.removeFromTop(meterGap); outMeterArea = centerMeters.removeFromTop(meterH);
 
     const int rowH = r.getHeight() / 3;
-    auto row1 = r.removeFromTop(rowH);
-    auto row2 = r.removeFromTop(rowH);
-    auto row3 = r;
+    auto row1 = r.removeFromTop(rowH); auto row2 = r.removeFromTop(rowH); auto row3 = r;
 
-    const int comboH = si(20.0f);
-    const int comboW = si(90.0f);
-    const int panelPadX = si(2.0f);
-    const int panelPadY = si(5.0f);
-    const int fixedKnobW = si(64.0f);
-    const int fixedKnobH = si(74.0f);
+    const int comboH = si(20.0f); const int comboW = si(90.0f);
+    const int panelPadX = si(2.0f); const int panelPadY = si(5.0f);
+    const int fixedKnobW = si(64.0f); const int fixedKnobH = si(74.0f);
 
-    auto placeKnob = [&](Knob* k, juce::Rectangle<int> slot) {
-        if (k == nullptr) return;
-        k->setBounds(slot.withSizeKeepingCentre(fixedKnobW, fixedKnobH));
-        };
+    auto placeKnob = [&](Knob* k, juce::Rectangle<int> slot) { if (k == nullptr) return; k->setBounds(slot.withSizeKeepingCentre(fixedKnobW, fixedKnobH)); };
 
-    // PLACE POWER BUTTONS
     auto placePowerBtn = [&](juce::ToggleButton& b, juce::Component* panel) {
         if (panel == nullptr) return;
         auto pr = panel->getBounds();
-        // Top right of panel, vertical centered in header
-        int btnS = si(18.0f);
-        int mR = si(10.0f);
-        int mY = (headerH - btnS) / 2;
+        int btnS = si(18.0f); int mR = si(10.0f); int mY = (headerH - btnS) / 2;
         b.setBounds(pr.getRight() - btnS - mR, pr.getY() + mY, btnS, btnS);
         };
 
@@ -723,46 +656,22 @@ void UltimateCompAudioProcessorEditor::resized()
         const int barW = juce::jmin(bot.getWidth(), si(300.0f));
         const int barH = juce::jmin(bot.getHeight(), si(24.0f));
         auto bar = bot.withWidth(barW).withHeight(barH);
-        bar.setX(bot.getCentreX() - barW / 2);
-        bar.setY(bot.getY() + (bot.getHeight() - barH) / 2);
+        bar.setX(bot.getCentreX() - barW / 2); bar.setY(bot.getY() + (bot.getHeight() - barH) / 2);
         grBarArea = bar.translated(panelDyn->getX(), panelDyn->getY());
-
         auto botRight = bot.removeFromRight(comboW + si(10.0f));
         cAutoRel.setBounds(botRight.withSizeKeepingCentre(comboW, comboH));
-
         auto topStrip = cLocal.removeFromTop(si(24.0f));
         const int colW = cLocal.getWidth() / 7;
-
-        placeKnob(kThresh.get(), cLocal.removeFromLeft(colW));
-        placeKnob(kRatio.get(), cLocal.removeFromLeft(colW));
+        placeKnob(kThresh.get(), cLocal.removeFromLeft(colW)); placeKnob(kRatio.get(), cLocal.removeFromLeft(colW));
         placeKnob(kKnee.get(), cLocal.removeFromLeft(colW));
-
-        // ATTACK WITH BUTTON ABOVE
-        auto rAttackSlot = cLocal.removeFromLeft(colW);
-        placeKnob(kAttack.get(), rAttackSlot);
-        int btnW = si(120.0f);
-        int btnH = si(20.0f);
-        // Position above the knob
-        bTurboAtt.setBounds(rAttackSlot.getX() + (rAttackSlot.getWidth() - btnW) / 2,
-            kAttack->getY() - btnH - si(4), // 4px padding above knob
-            btnW, btnH);
-
-        // RELEASE WITH BUTTON ABOVE
-        auto rReleaseSlot = cLocal.removeFromLeft(colW);
-        placeKnob(kRelease.get(), rReleaseSlot);
-        bTurboRel.setBounds(rReleaseSlot.getX() + (rReleaseSlot.getWidth() - btnW) / 2,
-            kRelease->getY() - btnH - si(4),
-            btnW, btnH);
-
-        // MAKEUP WITH AUTO BUTTON ABOVE
-        auto rMakeupSlot = cLocal.removeFromLeft(colW);
-        placeKnob(kMakeup.get(), rMakeupSlot);
-        // Small "Auto" button above Makeup
+        auto rAttackSlot = cLocal.removeFromLeft(colW); placeKnob(kAttack.get(), rAttackSlot);
+        int btnW = si(120.0f); int btnH = si(20.0f);
+        bTurboAtt.setBounds(rAttackSlot.getX() + (rAttackSlot.getWidth() - btnW) / 2, kAttack->getY() - btnH - si(4), btnW, btnH);
+        auto rReleaseSlot = cLocal.removeFromLeft(colW); placeKnob(kRelease.get(), rReleaseSlot);
+        bTurboRel.setBounds(rReleaseSlot.getX() + (rReleaseSlot.getWidth() - btnW) / 2, kRelease->getY() - btnH - si(4), btnW, btnH);
+        auto rMakeupSlot = cLocal.removeFromLeft(colW); placeKnob(kMakeup.get(), rMakeupSlot);
         int autoW = si(40.0f);
-        bAutoMakeup.setBounds(rMakeupSlot.getX() + (rMakeupSlot.getWidth() - autoW) / 2,
-            kMakeup->getY() - btnH - si(4),
-            autoW, btnH);
-
+        bAutoMakeup.setBounds(rMakeupSlot.getX() + (rMakeupSlot.getWidth() - autoW) / 2, kMakeup->getY() - btnH - si(4), autoW, btnH);
         placeKnob(kMix.get(), cLocal.removeFromLeft(colW));
     }
 
@@ -770,7 +679,6 @@ void UltimateCompAudioProcessorEditor::resized()
         const int detW = (int)std::lround(row2.getWidth() * 0.6f);
         panelDet->setBounds(row2.removeFromLeft(detW).reduced(panelPadX, panelPadY));
         placePowerBtn(bActiveDet, panelDet.get());
-
         panelCrest->setBounds(row2.reduced(panelPadX, panelPadY));
         placePowerBtn(bActiveCrest, panelCrest.get());
     }
@@ -779,8 +687,22 @@ void UltimateCompAudioProcessorEditor::resized()
         auto c = panelDet->getContentBounds().reduced(si(2.0f));
         auto bot = c.removeFromBottom(si(44.0f));
         cThrust.setBounds(bot.removeFromRight(comboW).withSizeKeepingCentre(comboW, comboH));
-        const int w = c.getWidth() / 4;
+
+        // PLACEMENT OF NEW INTEGRATED COMBOS
+        // We have two combos: cScMode (Input) and cMsMode (M/S Routing)
+        // We place them at the bottom left of the panel
+
+        int smallComboW = si(70.0f); // Slightly smaller width to fit nicely
+
+        auto botLeft = bot.removeFromLeft(smallComboW * 2 + si(10.0f)); // Reserve space
+
+        cScMode.setBounds(botLeft.removeFromLeft(smallComboW).withSizeKeepingCentre(smallComboW, comboH));
+        cMsMode.setBounds(botLeft.removeFromLeft(smallComboW).withSizeKeepingCentre(smallComboW, comboH));
+
+        // Now we have 5 knobs (LC, HC, RMS, Link, Blend)
+        const int w = c.getWidth() / 5;
         placeKnob(kScHpf.get(), c.removeFromLeft(w));
+        placeKnob(kScLpf.get(), c.removeFromLeft(w)); // HC Added
         placeKnob(kDetRms.get(), c.removeFromLeft(w));
         placeKnob(kStereoLink.get(), c.removeFromLeft(w));
         placeKnob(kFbBlend.get(), c);
@@ -791,72 +713,50 @@ void UltimateCompAudioProcessorEditor::resized()
         auto bot = c.removeFromBottom(si(44.0f));
         cCtrlMode.setBounds(bot.removeFromRight(comboW).withSizeKeepingCentre(comboW, comboH));
         const int w = c.getWidth() / 2;
-        placeKnob(kCrestTarget.get(), c.removeFromLeft(w));
-        placeKnob(kCrestSpeed.get(), c);
-
-        // Debug Dot Position
-        auto pr = panelCrest->getBounds();
-        int dotS = si(8.0f);
+        placeKnob(kCrestTarget.get(), c.removeFromLeft(w)); placeKnob(kCrestSpeed.get(), c);
+        auto pr = panelCrest->getBounds(); int dotS = si(8.0f);
         crestDotArea = juce::Rectangle<int>(pr.getX() + si(10.0f), pr.getY() + headerH + si(10.0f), dotS, dotS);
     }
 
     const int w3 = row3.getWidth() / 3;
     panelTpFlux->setBounds(row3.removeFromLeft(w3).reduced(panelPadX, panelPadY));
     placePowerBtn(bActiveTpFlux, panelTpFlux.get());
-
     panelSat->setBounds(row3.removeFromLeft(w3).reduced(panelPadX, panelPadY));
     placePowerBtn(bActiveSat, panelSat.get());
-
     panelEq->setBounds(row3.reduced(panelPadX, panelPadY));
     placePowerBtn(bActiveEq, panelEq.get());
 
     {
         auto c = panelTpFlux->getContentBounds().reduced(si(2.0f));
         auto bot = c.removeFromBottom(si(44.0f));
-        const int miniSlot = si(70.0f);
-        const int miniW = si(65.0f);
+        const int miniSlot = si(70.0f); const int miniW = si(65.0f);
         cFluxMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         cTpMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         const int w = c.getWidth() / 3;
-        placeKnob(kTpAmt.get(), c.removeFromLeft(w));
-        placeKnob(kTpRaise.get(), c.removeFromLeft(w));
-        placeKnob(kFluxAmt.get(), c);
+        placeKnob(kTpAmt.get(), c.removeFromLeft(w)); placeKnob(kTpRaise.get(), c.removeFromLeft(w)); placeKnob(kFluxAmt.get(), c);
     }
 
     {
         auto c = panelSat->getContentBounds().reduced(si(4.0f));
         auto satRect = panelSat->getBounds();
-        const int dotPadL = si(10.0f); // Changed from Right to Left padding
-        const int dotY = si(8.0f);
-        const int dotS = si(12.0f);
-        // Use getX() + dotPadL instead of getRight() - dotPadR
+        const int dotPadL = si(10.0f); const int dotY = si(8.0f); const int dotS = si(12.0f);
         fluxDotArea = juce::Rectangle<int>(satRect.getX() + dotPadL, satRect.getY() + dotY, dotS, dotS);
-
         auto bot = c.removeFromBottom(si(44.0f));
-        // Add Mirror button to bottom row
         auto mirrorSlot = bot.removeFromRight(si(50.0f));
         bMirror.setBounds(mirrorSlot.withSizeKeepingCentre(si(40.0f), si(18.0f)));
-
-        const int miniSlot = si(70.0f);
-        const int miniW = si(65.0f);
+        const int miniSlot = si(70.0f); const int miniW = si(65.0f);
         cSatMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         cSatAutoGain.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         cSignalFlow.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
-
-        // Now 4 knobs across
         const int w = c.getWidth() / 4;
-        placeKnob(kSatPre.get(), c.removeFromLeft(w));
-        placeKnob(kSatDrive.get(), c.removeFromLeft(w));
-        placeKnob(kSatTrim.get(), c.removeFromLeft(w));
-        placeKnob(kSatMix.get(), c);
+        placeKnob(kSatPre.get(), c.removeFromLeft(w)); placeKnob(kSatDrive.get(), c.removeFromLeft(w));
+        placeKnob(kSatTrim.get(), c.removeFromLeft(w)); placeKnob(kSatMix.get(), c);
     }
 
     {
         auto c = panelEq->getContentBounds().reduced(si(4.0f));
         const int w = c.getWidth() / 4;
-        placeKnob(kTone.get(), c.removeFromLeft(w));
-        placeKnob(kToneFreq.get(), c.removeFromLeft(w));
-        placeKnob(kBright.get(), c.removeFromLeft(w));
-        placeKnob(kBrightFreq.get(), c);
+        placeKnob(kTone.get(), c.removeFromLeft(w)); placeKnob(kToneFreq.get(), c.removeFromLeft(w));
+        placeKnob(kBright.get(), c.removeFromLeft(w)); placeKnob(kBrightFreq.get(), c);
     }
 }

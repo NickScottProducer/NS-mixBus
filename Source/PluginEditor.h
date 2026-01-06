@@ -25,12 +25,14 @@ private:
 
     UltimateCompAudioProcessor& audioProcessor;
 
-    // Forward declarations
+    // Logo Image
+    juce::Image pluginLogo;
+
     class UltimateLNF;
     class Panel;
     class Knob;
 
-    std::unique_ptr<UltimateLNF> lnf;
+    std::unique_ptr<UltimateLNF> lnf; // Main Dark Theme
 
     // Panels
     std::unique_ptr<Panel> panelDyn;
@@ -42,25 +44,21 @@ private:
 
     // Controls
     std::unique_ptr<Knob> kThresh, kRatio, kKnee, kAttack, kRelease, kMakeup, kMix;
-    std::unique_ptr<Knob> kScHpf, kDetRms, kStereoLink, kFbBlend;
+    std::unique_ptr<Knob> kScHpf, kScLpf, kDetRms, kStereoLink, kFbBlend; // Added kScLpf
     std::unique_ptr<Knob> kCrestTarget, kCrestSpeed;
     std::unique_ptr<Knob> kTpAmt, kTpRaise, kFluxAmt;
 
-    // NEW: SatPre
     std::unique_ptr<Knob> kSatPre, kSatDrive, kSatTrim, kSatMix;
     std::unique_ptr<Knob> kTone, kToneFreq, kBright, kBrightFreq;
 
-    juce::ComboBox cAutoRel;
-    // NEW: Split Turbo Buttons & Mirror & AutoMakeup
-    juce::ToggleButton bTurboAtt, bTurboRel, bMirror, bAutoMakeup;
+    juce::ComboBox cAutoRel, cThrust, cCtrlMode, cTpMode, cFluxMode, cSatMode, cSatAutoGain, cSignalFlow;
 
-    juce::ComboBox cThrust;
-    juce::ComboBox cCtrlMode;
-    juce::ComboBox cTpMode;
-    juce::ComboBox cFluxMode;
-    juce::ComboBox cSatMode;
-    juce::ComboBox cSatAutoGain;
-    juce::ComboBox cSignalFlow;
+    // SIDECHAIN INTEGRATED COMBOS
+    juce::ComboBox cScMode;
+    juce::ComboBox cMsMode;
+
+    // Buttons
+    juce::ToggleButton bTurboAtt, bTurboRel, bMirror, bAutoMakeup;
 
     // Module Bypasses
     juce::ToggleButton bActiveDyn, bActiveDet, bActiveCrest, bActiveTpFlux, bActiveSat, bActiveEq;
@@ -71,36 +69,29 @@ private:
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<SliderAttachment> aThresh, aRatio, aKnee, aAttack, aRelease, aMakeup, aMix;
-    std::unique_ptr<SliderAttachment> aScHpf, aDetRms, aStereoLink, aFbBlend;
+    std::unique_ptr<SliderAttachment> aScHpf, aScLpf, aDetRms, aStereoLink, aFbBlend; // Added aScLpf
     std::unique_ptr<SliderAttachment> aCrestTarget, aCrestSpeed;
     std::unique_ptr<SliderAttachment> aTpAmt, aTpRaise, aFluxAmt;
     std::unique_ptr<SliderAttachment> aSatPre, aSatDrive, aSatTrim, aSatMix;
     std::unique_ptr<SliderAttachment> aTone, aToneFreq, aBright, aBrightFreq;
 
+    // Attachments
+    std::unique_ptr<ComboBoxAttachment> aMsMode;
+    std::unique_ptr<ComboBoxAttachment> cScModeAtt;
+
     std::unique_ptr<ComboBoxAttachment> aAutoRel, aThrust, aCtrlMode, aTpMode, aFluxMode, aSatMode, aSatAutoGain, aSignalFlow;
-
     std::unique_ptr<ButtonAttachment> aTurboAtt, aTurboRel, aMirror, aAutoMakeup;
-
-    // Bypass Attachments
     std::unique_ptr<ButtonAttachment> aActiveDyn, aActiveDet, aActiveCrest, aActiveTpFlux, aActiveSat, aActiveEq;
 
     // Helpers
     void initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment, const juce::String& paramID);
     void bindKnob(Knob& knob, std::unique_ptr<SliderAttachment>& attachment, const juce::String& paramID, const juce::String& suffix);
 
-    // Meter data
     float smoothInL = 0.f, smoothInR = 0.f;
     float smoothOutL = 0.f, smoothOutR = 0.f;
-    float smoothGR = 0.f;
-    float smoothFlux = 0.f;
-    float smoothCrest = 0.f; // Debug
+    float smoothGR = 0.f, smoothFlux = 0.f, smoothCrest = 0.f;
 
-    // Paint geometry (Global Coordinates)
-    juce::Rectangle<int> inMeterArea;
-    juce::Rectangle<int> outMeterArea;
-    juce::Rectangle<int> grBarArea;
-    juce::Rectangle<int> fluxDotArea;
-    juce::Rectangle<int> crestDotArea;
+    juce::Rectangle<int> inMeterArea, outMeterArea, grBarArea, fluxDotArea, crestDotArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(UltimateCompAudioProcessorEditor)
 };

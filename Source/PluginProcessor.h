@@ -52,8 +52,6 @@ public:
     std::atomic<float> meterOutR{ 0.0f };
     std::atomic<float> meterGR{ 0.0f };
     std::atomic<float> meterFlux{ 0.0f };
-
-    // NEW: Crest Debug
     std::atomic<float> meterCrest{ 0.0f };
 
 private:
