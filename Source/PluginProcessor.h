@@ -6,7 +6,20 @@
 
 #pragma once
 
+#if defined(_MSC_VER)
+#pragma warning(push)
+// Suppress noisy MSVC Code Analysis/Core Guideline warnings coming from JUCE headers.
+#pragma warning(disable: 26495) // uninitialised member variables
+#pragma warning(disable: 26451) // arithmetic overflow
+#pragma warning(disable: 26439) // function should not throw
+#pragma warning(disable: 26440) // function should be noexcept
+#pragma warning(disable: 26812) // prefer enum class
+#pragma warning(disable: 26819) // unannotated fallthrough
+#endif
 #include <JuceHeader.h>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 #include "UltimateCompDSP.h"
 
 class UltimateCompAudioProcessor : public juce::AudioProcessor
@@ -45,7 +58,7 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
-    // --- METERING DATA (Thread Safe) ---
+    // --- METERING DATA ---
     std::atomic<float> meterInL{ 0.0f };
     std::atomic<float> meterInR{ 0.0f };
     std::atomic<float> meterOutL{ 0.0f };

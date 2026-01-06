@@ -28,11 +28,15 @@ private:
     // Logo Image
     juce::Image pluginLogo;
 
+    // Mirroring State Tracking
+    float lastCompInputVal = 0.0f;
+    bool ignoreCallbacks = false; // Prevents recursive loops
+
     class UltimateLNF;
     class Panel;
     class Knob;
 
-    std::unique_ptr<UltimateLNF> lnf; // Main Dark Theme
+    std::unique_ptr<UltimateLNF> lnf;
 
     // Panels
     std::unique_ptr<Panel> panelDyn;
@@ -44,7 +48,8 @@ private:
 
     // Controls
     std::unique_ptr<Knob> kThresh, kRatio, kKnee, kAttack, kRelease, kMakeup, kMix;
-    std::unique_ptr<Knob> kScHpf, kScLpf, kDetRms, kStereoLink, kFbBlend; // Added kScLpf
+    std::unique_ptr<Knob> kCompInput;
+    std::unique_ptr<Knob> kScHpf, kScLpf, kDetRms, kStereoLink, kMsBalance, kFbBlend, kScLevel; // NEW
     std::unique_ptr<Knob> kCrestTarget, kCrestSpeed;
     std::unique_ptr<Knob> kTpAmt, kTpRaise, kFluxAmt;
 
@@ -53,12 +58,19 @@ private:
 
     juce::ComboBox cAutoRel, cThrust, cCtrlMode, cTpMode, cFluxMode, cSatMode, cSatAutoGain, cSignalFlow;
 
-    // SIDECHAIN INTEGRATED COMBOS
+    // NEW: Compressor Auto-Gain
+    juce::ComboBox cCompAutoGain;
+
+    // SIDECHAIN COMBOS
     juce::ComboBox cScMode;
     juce::ComboBox cMsMode;
 
     // Buttons
-    juce::ToggleButton bTurboAtt, bTurboRel, bMirror, bAutoMakeup;
+    juce::ToggleButton bTurboAtt, bTurboRel, bMirror, bCompMirror;
+
+    // SC Routing Buttons
+    juce::ToggleButton bScToComp, bScToSat;
+    juce::ToggleButton bScAudition;
 
     // Module Bypasses
     juce::ToggleButton bActiveDyn, bActiveDet, bActiveCrest, bActiveTpFlux, bActiveSat, bActiveEq;
@@ -69,21 +81,28 @@ private:
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<SliderAttachment> aThresh, aRatio, aKnee, aAttack, aRelease, aMakeup, aMix;
-    std::unique_ptr<SliderAttachment> aScHpf, aScLpf, aDetRms, aStereoLink, aFbBlend; // Added aScLpf
+    std::unique_ptr<SliderAttachment> aCompInput;
+    std::unique_ptr<SliderAttachment> aScHpf, aScLpf, aDetRms, aStereoLink, aMsBalance, aFbBlend, aScLevel; // NEW
     std::unique_ptr<SliderAttachment> aCrestTarget, aCrestSpeed;
     std::unique_ptr<SliderAttachment> aTpAmt, aTpRaise, aFluxAmt;
     std::unique_ptr<SliderAttachment> aSatPre, aSatDrive, aSatTrim, aSatMix;
     std::unique_ptr<SliderAttachment> aTone, aToneFreq, aBright, aBrightFreq;
 
-    // Attachments
     std::unique_ptr<ComboBoxAttachment> aMsMode;
     std::unique_ptr<ComboBoxAttachment> cScModeAtt;
 
     std::unique_ptr<ComboBoxAttachment> aAutoRel, aThrust, aCtrlMode, aTpMode, aFluxMode, aSatMode, aSatAutoGain, aSignalFlow;
-    std::unique_ptr<ButtonAttachment> aTurboAtt, aTurboRel, aMirror, aAutoMakeup;
+
+    // NEW: Attachment
+    std::unique_ptr<ComboBoxAttachment> aCompAutoGain;
+
+    std::unique_ptr<ButtonAttachment> aTurboAtt, aTurboRel, aMirror, aCompMirror;
+
+    // FIXED: Removed duplicate 'aScAudition' declaration here
+    std::unique_ptr<ButtonAttachment> aScToComp, aScToSat, aScAudition;
+
     std::unique_ptr<ButtonAttachment> aActiveDyn, aActiveDet, aActiveCrest, aActiveTpFlux, aActiveSat, aActiveEq;
 
-    // Helpers
     void initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment, const juce::String& paramID);
     void bindKnob(Knob& knob, std::unique_ptr<SliderAttachment>& attachment, const juce::String& paramID, const juce::String& suffix);
 

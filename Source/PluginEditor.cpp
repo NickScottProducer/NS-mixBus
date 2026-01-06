@@ -23,7 +23,7 @@ static inline juce::Rectangle<float> shrinkToSquare(juce::Rectangle<float> r)
 class UltimateCompAudioProcessorEditor::UltimateLNF final : public juce::LookAndFeel_V4
 {
 public:
-    explicit UltimateLNF(bool inverse = false) : isInverse(inverse)
+    UltimateLNF()
     {
         setColour(juce::Slider::thumbColourId, juce::Colours::transparentBlack);
         setColour(juce::ComboBox::backgroundColourId, c(bgA));
@@ -43,41 +43,22 @@ public:
 
     enum Palette { bgA, bgB, panel, panel2, edge, text, text2, accent, accent2, ok, warn, white, line };
 
-    juce::Colour c(Palette p)
+    juce::Colour c(Palette type)
     {
-        if (isInverse) {
-            switch (p) {
-            case bgA:     return juce::Colour(0xfff5f5f5);
-            case bgB:     return juce::Colour(0xffffffff);
-            case panel:   return juce::Colour(0x00000000);
-            case panel2:  return juce::Colour(0xffe0e0e0);
-            case edge:    return juce::Colour(0xffb0b0b0);
-            case text:    return juce::Colour(0xff101010);
-            case text2:   return juce::Colour(0xff606060);
-            case accent:  return juce::Colour(0xffbd00ff);
-            case accent2: return juce::Colour(0xffd966ff);
-            case ok:      return juce::Colour(0xff00a0aa);
-            case warn:    return juce::Colour(0xffcc0044);
-            case white:   return juce::Colour(0xff000000);
-            case line:    return juce::Colour(0xffcccccc);
-            }
-        }
-        else {
-            switch (p) {
-            case bgA:     return juce::Colour(0xff0a0910);
-            case bgB:     return juce::Colour(0xff14121d);
-            case panel:   return juce::Colour(0x00000000);
-            case panel2:  return juce::Colour(0xff110f18);
-            case edge:    return juce::Colour(0xff382e4d);
-            case text:    return juce::Colour(0xffe6e1ff);
-            case text2:   return juce::Colour(0xff9085ad);
-            case accent:  return juce::Colour(0xffbd00ff);
-            case accent2: return juce::Colour(0xffd966ff);
-            case ok:      return juce::Colour(0xff00f2ff);
-            case warn:    return juce::Colour(0xffff0055);
-            case white:   return juce::Colours::white;
-            case line:    return juce::Colour(0xff2a2438);
-            }
+        switch (type) {
+        case bgA:     return juce::Colour(0xff0a0910);
+        case bgB:     return juce::Colour(0xff14121d);
+        case panel:   return juce::Colour(0x00000000);
+        case panel2:  return juce::Colour(0xff110f18);
+        case edge:    return juce::Colour(0xff382e4d);
+        case text:    return juce::Colour(0xffe6e1ff);
+        case text2:   return juce::Colour(0xff9085ad);
+        case accent:  return juce::Colour(0xffbd00ff);
+        case accent2: return juce::Colour(0xffd966ff);
+        case ok:      return juce::Colour(0xff00f2ff);
+        case warn:    return juce::Colour(0xffff0055);
+        case white:   return juce::Colours::white;
+        case line:    return juce::Colour(0xff2a2438);
         }
         return juce::Colours::red;
     }
@@ -120,10 +101,14 @@ public:
     {
         if (b.getButtonText().isEmpty()) return;
         auto r = b.getLocalBounds().toFloat().reduced(2.0f);
-        bool isSmall = b.getButtonText().length() <= 4;
+
+        // ALLOW LONGER TEXT FOR BADGES like "Mirror" or "SC->Comp"
+        bool isSmall = b.getButtonText().length() <= 10;
+
         const float boxW = isSmall ? r.getWidth() : 32.0f;
         auto box = r;
         if (!isSmall) {
+            // Checkbox style for very long text (fallback)
             const float stdH = 16.0f;
             box = r.withWidth(boxW).withHeight(stdH).withY(r.getCentreY() - stdH / 2);
         }
@@ -138,21 +123,11 @@ public:
             g.setColour(c(accent));
             g.drawRoundedRectangle(box, 4.0f, 1.0f);
         }
-        if (!isSmall) {
-            float indSize = 10.0f;
-            auto ind = box.withSizeKeepingCentre(indSize, indSize);
-            if (on) ind.translate(8.0f, 0.0f); else ind.translate(-8.0f, 0.0f);
-            g.setColour(on ? c(accent) : c(text2));
-            g.fillEllipse(ind);
-            g.setColour(c(text));
-            g.setFont(juce::FontOptions(13.0f));
-            g.drawFittedText(b.getButtonText(), r.withTrimmedLeft(boxW + 8.0f).toNearestInt(), juce::Justification::centredLeft, 1);
-        }
-        else {
-            g.setColour(on ? c(white) : c(text2));
-            g.setFont(juce::FontOptions(11.0f).withStyle("bold"));
-            g.drawFittedText(b.getButtonText(), box.toNearestInt(), juce::Justification::centred, 1);
-        }
+
+        // Draw Text inside the box (Badge style)
+        g.setColour(on ? c(white) : c(text2));
+        g.setFont(juce::FontOptions(11.0f).withStyle("bold"));
+        g.drawFittedText(b.getButtonText(), box.toNearestInt(), juce::Justification::centred, 1);
     }
 
     void drawComboBox(juce::Graphics& g, int width, int height, bool, int, int, int, int, juce::ComboBox&) override
@@ -168,9 +143,6 @@ public:
         g.setColour(c(accent));
         g.fillPath(p);
     }
-
-private:
-    bool isInverse;
 };
 
 //=============================================================================
@@ -273,7 +245,7 @@ private:
 UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
-    lnf = std::make_unique<UltimateLNF>(false);
+    lnf = std::make_unique<UltimateLNF>();
 
     // LOAD LOGO: Ensure 'logo.png' is added to Projucer BinaryData!
     pluginLogo = juce::ImageCache::getFromMemory(BinaryData::logo_png, BinaryData::logo_pngSize);
@@ -294,15 +266,38 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kAttack->setTextFromValue([this](double v) { return juce::String(bTurboAtt.getToggleState() ? (v * 0.1) : v, 2) + " ms"; });
     kRelease = makeKnob("Release", *lnf);
     kRelease->setTextFromValue([this](double v) { return juce::String(bTurboRel.getToggleState() ? (v * 0.1) : v, 2) + " ms"; });
+
+    // Compressor Input & Makeup
+    kCompInput = makeKnob("Input", *lnf); kCompInput->setUnitSuffix("dB");
+
+    // PHYSICAL MIRROR LOGIC FOR INPUT KNOB
+    kCompInput->onValChange = [this] {
+        kCompInput->updateLabelText();
+
+        // This physically moves the output knob if mirror is ON
+        float currentVal = (float)kCompInput->getSlider().getValue();
+        if (bCompMirror.getToggleState() && !ignoreCallbacks) {
+            ignoreCallbacks = true; // prevent recursion loop
+            float delta = currentVal - lastCompInputVal;
+            // Move Output inversely
+            double newMakeup = kMakeup->getSlider().getValue() - delta;
+            kMakeup->getSlider().setValue(newMakeup, juce::sendNotificationSync);
+            ignoreCallbacks = false;
+        }
+        lastCompInputVal = currentVal;
+        };
+
     kMakeup = makeKnob("Output", *lnf); kMakeup->setUnitSuffix("dB");
     kMix = makeKnob("Mix", *lnf); kMix->setUnitSuffix("%");
 
     // Sidechain Knobs
     kScHpf = makeKnob("Low Cut", *lnf); kScHpf->setUnitSuffix("Hz");
-    kScLpf = makeKnob("High Cut", *lnf); kScLpf->setUnitSuffix("Hz"); // High Cut
+    kScLpf = makeKnob("High Cut", *lnf); kScLpf->setUnitSuffix("Hz");
     kDetRms = makeKnob("RMS Window", *lnf); kDetRms->setUnitSuffix("ms");
     kStereoLink = makeKnob("Link", *lnf); kStereoLink->setUnitSuffix("%");
+    kMsBalance = makeKnob("M/S Bal", *lnf); kMsBalance->setUnitSuffix("dB"); // NEW
     kFbBlend = makeKnob("FB Blend", *lnf); kFbBlend->setUnitSuffix("%");
+    kScLevel = makeKnob("SC Level", *lnf); kScLevel->setUnitSuffix("dB");
 
     kCrestTarget = makeKnob("Crest Target", *lnf); kCrestTarget->setUnitSuffix("dB");
     kCrestSpeed = makeKnob("Crest Speed", *lnf); kCrestSpeed->setUnitSuffix("ms");
@@ -326,6 +321,10 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
         };
 
     prepCombo(cAutoRel); cAutoRel.addItem("Manual", 1); cAutoRel.addItem("Auto", 2);
+
+    // NEW: Compressor Auto-Gain Control
+    prepCombo(cCompAutoGain); cCompAutoGain.addItem("AGC Off", 1); cCompAutoGain.addItem("Partial", 2); cCompAutoGain.addItem("Full", 3);
+
     prepCombo(cThrust); cThrust.addItem("Normal", 1); cThrust.addItem("Med", 2); cThrust.addItem("Loud", 3);
     prepCombo(cCtrlMode); cCtrlMode.addItem("Manual", 1); cCtrlMode.addItem("Auto", 2);
     prepCombo(cTpMode); cTpMode.addItem("Off", 1); cTpMode.addItem("On", 2);
@@ -341,8 +340,14 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
 
     bTurboAtt.setButtonText("F"); bTurboAtt.setClickingTogglesState(true); bTurboAtt.onClick = [this] { kAttack->updateLabelText(); };
     bTurboRel.setButtonText("F"); bTurboRel.setClickingTogglesState(true); bTurboRel.onClick = [this] { kRelease->updateLabelText(); };
+
     bMirror.setButtonText("Mirror"); bMirror.setClickingTogglesState(true);
-    bAutoMakeup.setButtonText("Auto"); bAutoMakeup.setClickingTogglesState(true);
+    bCompMirror.setButtonText("Mirror"); bCompMirror.setClickingTogglesState(true);
+
+    // Routing Toggles
+    bScToComp.setButtonText("SC->Comp"); bScToComp.setClickingTogglesState(true);
+    bScToSat.setButtonText("SC->Sat"); bScToSat.setClickingTogglesState(true);
+    bScAudition.setButtonText("Audition"); bScAudition.setClickingTogglesState(true);
 
     // --- 3. Panels ---
     panelDyn = std::make_unique<Panel>("Main Dynamics", *lnf);
@@ -376,17 +381,26 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     panelDyn->addAndMakeVisible(*kThresh); panelDyn->addAndMakeVisible(*kRatio); panelDyn->addAndMakeVisible(*kKnee);
     panelDyn->addAndMakeVisible(*kAttack); panelDyn->addAndMakeVisible(bTurboAtt);
     panelDyn->addAndMakeVisible(*kRelease); panelDyn->addAndMakeVisible(bTurboRel);
-    panelDyn->addAndMakeVisible(*kMakeup); panelDyn->addAndMakeVisible(bAutoMakeup);
+
+    // Compressor Input/Output/Mix
+    panelDyn->addAndMakeVisible(*kCompInput); panelDyn->addAndMakeVisible(*kMakeup);
+    panelDyn->addAndMakeVisible(bCompMirror);
+    panelDyn->addAndMakeVisible(cCompAutoGain); // Added to panel
+
     panelDyn->addAndMakeVisible(*kMix); panelDyn->addAndMakeVisible(cAutoRel);
 
     // Sidechain Panel Children
     panelDet->addAndMakeVisible(*kScHpf);
-    panelDet->addAndMakeVisible(*kScLpf); // High Cut
+    panelDet->addAndMakeVisible(*kScLpf);
     panelDet->addAndMakeVisible(*kDetRms);
-    panelDet->addAndMakeVisible(*kStereoLink); panelDet->addAndMakeVisible(*kFbBlend);
+    panelDet->addAndMakeVisible(*kStereoLink); panelDet->addAndMakeVisible(*kMsBalance); panelDet->addAndMakeVisible(*kFbBlend); panelDet->addAndMakeVisible(*kScLevel); // NEW
     panelDet->addAndMakeVisible(cThrust);
-    panelDet->addAndMakeVisible(cScMode); // Added to panel
-    panelDet->addAndMakeVisible(cMsMode); // Added to panel
+    panelDet->addAndMakeVisible(cScMode);
+    panelDet->addAndMakeVisible(cMsMode);
+    // Add Routing Toggles to Det Panel
+    panelDet->addAndMakeVisible(bScToComp);
+    panelDet->addAndMakeVisible(bScToSat);
+    panelDet->addAndMakeVisible(bScAudition);
 
     panelCrest->addAndMakeVisible(*kCrestTarget); panelCrest->addAndMakeVisible(*kCrestSpeed); panelCrest->addAndMakeVisible(cCtrlMode);
     panelTpFlux->addAndMakeVisible(*kTpAmt); panelTpFlux->addAndMakeVisible(*kTpRaise); panelTpFlux->addAndMakeVisible(*kFluxAmt);
@@ -402,13 +416,21 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     // --- 6. Bindings ---
     bindKnob(*kThresh, aThresh, "thresh", "dB"); bindKnob(*kRatio, aRatio, "ratio", ""); bindKnob(*kKnee, aKnee, "knee", "dB");
     bindKnob(*kAttack, aAttack, "att_ms", "ms"); bindKnob(*kRelease, aRelease, "rel_ms", "ms");
+    bindKnob(*kCompInput, aCompInput, "comp_input", "dB");
+
+    // Store initial value for tracking
+    if (auto* p = audioProcessor.apvts.getParameter("comp_input"))
+        lastCompInputVal = p->convertFrom0to1(p->getValue());
+
     bindKnob(*kMakeup, aMakeup, "makeup", "dB"); bindKnob(*kMix, aMix, "dry_wet", "%");
 
-    // SC Bindings
     bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz");
     bindKnob(*kScLpf, aScLpf, "sc_lp_freq", "Hz");
     bindKnob(*kDetRms, aDetRms, "det_rms", "ms");
-    bindKnob(*kStereoLink, aStereoLink, "stereo_link", "%"); bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%");
+    bindKnob(*kStereoLink, aStereoLink, "stereo_link", "%");
+    bindKnob(*kMsBalance, aMsBalance, "ms_balance", "dB"); // NEW
+    bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%");
+    bindKnob(*kScLevel, aScLevel, "sc_level_db", "dB");
 
     bindKnob(*kCrestTarget, aCrestTarget, "crest_target", "dB"); bindKnob(*kCrestSpeed, aCrestSpeed, "crest_speed", "ms");
     bindKnob(*kTpAmt, aTpAmt, "tp_amount", "%"); bindKnob(*kTpRaise, aTpRaise, "tp_thresh_raise", "dB");
@@ -419,6 +441,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     bindKnob(*kBright, aBright, "harm_bright", "dB"); bindKnob(*kBrightFreq, aBrightFreq, "harm_freq", "Hz");
 
     initCombo(cAutoRel, aAutoRel, "auto_rel");
+    initCombo(cCompAutoGain, aCompAutoGain, "comp_autogain"); // NEW
     initCombo(cThrust, aThrust, "thrust_mode");
     initCombo(cCtrlMode, aCtrlMode, "ctrl_mode");
     initCombo(cTpMode, aTpMode, "tp_mode");
@@ -433,7 +456,11 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     aTurboAtt = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_att", bTurboAtt);
     aTurboRel = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_rel", bTurboRel);
     aMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sat_mirror", bMirror);
-    aAutoMakeup = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "auto_makeup", bAutoMakeup);
+
+    aCompMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "comp_mirror", bCompMirror);
+    aScToComp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_to_comp", bScToComp);
+    aScToSat = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_to_sat", bScToSat);
+    aScAudition = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_audition", bScAudition);
 
     setResizable(true, true);
     setResizeLimits(1000, 600, 2000, 1200);
@@ -477,44 +504,43 @@ void UltimateCompAudioProcessorEditor::timerCallback()
 
 void UltimateCompAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(UltimateLNF(false).c(UltimateLNF::bgA));
-    g.setGradientFill(juce::ColourGradient(UltimateLNF(false).c(UltimateLNF::bgA), 0, 0, UltimateLNF(false).c(UltimateLNF::bgB), 0, (float)getHeight(), false));
+    g.fillAll(lnf->c(UltimateLNF::bgA));
+    g.setGradientFill(juce::ColourGradient(lnf->c(UltimateLNF::bgA), 0, 0, lnf->c(UltimateLNF::bgB), 0, (float)getHeight(), false));
     g.fillAll();
-    g.setColour(UltimateLNF(false).c(UltimateLNF::line).withAlpha(0.20f));
+    g.setColour(lnf->c(UltimateLNF::line).withAlpha(0.20f));
     for (int x = 0; x < getWidth(); x += 20) g.drawVerticalLine(x, 0.0f, (float)getHeight());
     for (int y = 0; y < getHeight(); y += 20) g.drawHorizontalLine(y, 0.0f, (float)getWidth());
 
     // --- DRAW COMPOSITE LOGO (Image + Text) ---
     const int headerX = 15;
     const int headerY = 15;
-    const int logoSize = 60; // Increased logo size
-    const int gap = 10;      // Gap between logo and text
-    const int textHeight = 32; // Text height
+    const int logoSize = 60;
+    const int gap = 10;
+    const int textHeight = 32;
 
     if (pluginLogo.isValid())
     {
         // 1. Draw bigger, brighter logo
-        g.setOpacity(1.0f); // Ensure full brightness/opacity
+        g.setOpacity(1.0f);
         g.drawImageWithin(pluginLogo,
             headerX, headerY, logoSize, logoSize,
             juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize,
             false);
 
         // 2. Draw "mixBus" text to the right
-        g.setColour(UltimateLNF(false).c(UltimateLNF::text)); // Use main light text color
+        g.setColour(lnf->c(UltimateLNF::text));
         g.setFont(juce::FontOptions((float)textHeight).withStyle("bold"));
 
-        // Calculate text position relative to logo to center it vertically
         int textX = headerX + logoSize + gap;
         int textY = headerY + (logoSize - textHeight) / 2;
-        int textW = 200; // Plenty of space for text
+        int textW = 200;
 
         g.drawText("mixBus", textX, textY, textW, textHeight, juce::Justification::left);
     }
     else
     {
         // Fallback if image load fails
-        g.setColour(UltimateLNF(false).c(UltimateLNF::text));
+        g.setColour(lnf->c(UltimateLNF::text));
         g.setFont(juce::FontOptions(22.0f).withStyle("bold"));
         g.drawText("NS - MixBus", 20, 10, 200, 30, juce::Justification::left);
     }
@@ -522,19 +548,17 @@ void UltimateCompAudioProcessorEditor::paint(juce::Graphics& g)
 
 void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
-    auto lnfStd = UltimateLNF(false);
-
     auto drawHugeMeter = [&](juce::Rectangle<int> r, float L, float R, juce::String label) {
-        g.setColour(lnfStd.c(UltimateLNF::panel2).withAlpha(0.9f));
+        g.setColour(lnf->c(UltimateLNF::panel2).withAlpha(0.9f));
         g.fillRoundedRectangle(r.toFloat(), 6.0f);
-        g.setColour(lnfStd.c(UltimateLNF::edge));
+        g.setColour(lnf->c(UltimateLNF::edge));
         g.drawRoundedRectangle(r.toFloat(), 6.0f, 1.5f);
         int w = r.getWidth() - 35; int h = r.getHeight() / 2 - 2;
         int barX = r.getX() + 30; int barY = r.getY() + 2;
-        g.setColour(lnfStd.c(UltimateLNF::ok));
+        g.setColour(lnf->c(UltimateLNF::ok));
         g.fillRect(barX, barY, (int)(w * juce::jlimit(0.0f, 1.0f, L * 1.5f)), h);
         g.fillRect(barX, barY + h + 2, (int)(w * juce::jlimit(0.0f, 1.0f, R * 1.5f)), h);
-        g.setColour(lnfStd.c(UltimateLNF::text));
+        g.setColour(lnf->c(UltimateLNF::text));
         g.setFont(juce::FontOptions(11.0f).withStyle("bold"));
         g.drawText(label, r.getX(), r.getY(), 30, r.getHeight(), juce::Justification::centred);
         };
@@ -542,34 +566,34 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     drawHugeMeter(outMeterArea, smoothOutL, smoothOutR, "OUT");
 
     if (!grBarArea.isEmpty()) {
-        g.setColour(lnfStd.c(UltimateLNF::panel2));
+        g.setColour(lnf->c(UltimateLNF::panel2));
         g.fillRoundedRectangle(grBarArea.toFloat(), 6.0f);
         float grInv = std::abs(smoothGR);
         float w = (float)grBarArea.getWidth() * (juce::jlimit(0.0f, 24.0f, grInv) / 24.0f);
         if (w > 1.0f) {
             juce::Graphics::ScopedSaveState ss(g);
             g.reduceClipRegion((int)(grBarArea.getRight() - w), grBarArea.getY(), (int)w, grBarArea.getHeight());
-            g.setColour(lnfStd.c(UltimateLNF::warn));
+            g.setColour(lnf->c(UltimateLNF::warn));
             g.fillRect(grBarArea);
         }
-        g.setColour(lnfStd.c(UltimateLNF::white));
+        g.setColour(lnf->c(UltimateLNF::white));
         g.setFont(juce::FontOptions(16.0f).withStyle("bold"));
         g.drawText(juce::String(smoothGR, 1) + " dB", grBarArea, juce::Justification::centred);
-        g.setColour(lnfStd.c(UltimateLNF::text2));
+        g.setColour(lnf->c(UltimateLNF::text2));
         g.setFont(juce::FontOptions(12.0f));
         g.drawText("GR", grBarArea.getX() - 30, grBarArea.getY(), 25, grBarArea.getHeight(), juce::Justification::right);
     }
 
     auto r = fluxDotArea.toFloat();
-    g.setColour(lnfStd.c(UltimateLNF::panel2));
+    g.setColour(lnf->c(UltimateLNF::panel2));
     g.fillEllipse(r);
     if (smoothFlux > 0.01f) {
-        g.setColour(lnfStd.c(UltimateLNF::warn).withAlpha(juce::jlimit(0.2f, 1.0f, smoothFlux)));
+        g.setColour(lnf->c(UltimateLNF::warn).withAlpha(juce::jlimit(0.2f, 1.0f, smoothFlux)));
         g.fillEllipse(r.reduced(2));
     }
 
     if (!crestDotArea.isEmpty()) {
-        g.setColour(lnfStd.c(UltimateLNF::panel2));
+        g.setColour(lnf->c(UltimateLNF::panel2));
         g.fillEllipse(crestDotArea.toFloat());
         if (smoothCrest > 0.001f) {
             g.setColour(juce::Colours::red.withAlpha(juce::jlimit(0.2f, 1.0f, smoothCrest * 5.0f)));
@@ -582,12 +606,13 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     auto drawPower = [&](juce::ToggleButton& b) {
         auto bR = b.getBounds().toFloat();
         bool on = b.getToggleState();
-        g.setColour(on ? lnfStd.c(UltimateLNF::ok) : lnfStd.c(UltimateLNF::text2).withAlpha(0.3f));
+        g.setColour(on ? lnf->c(UltimateLNF::ok) : lnf->c(UltimateLNF::text2).withAlpha(0.3f));
         float cx = bR.getCentreX(); float cy = bR.getCentreY(); float rad = 5.0f;
-        juce::Path p; p.addArc(cx - rad, cy - rad, rad * 2, rad * 2, 0.5f, 5.8f, true);
-        g.strokePath(p, juce::PathStrokeType(1.5f));
+        // FIXED: Renamed 'p' to 'path' to avoid shadowing warnings
+        juce::Path path; path.addArc(cx - rad, cy - rad, rad * 2, rad * 2, 0.5f, 5.8f, true);
+        g.strokePath(path, juce::PathStrokeType(1.5f));
         g.drawLine(cx, cy - rad, cx, cy - rad + 4.0f, 1.5f);
-        if (on) { g.setColour(lnfStd.c(UltimateLNF::ok).withAlpha(0.4f)); g.fillEllipse(cx - rad, cy - rad, rad * 2, rad * 2); }
+        if (on) { g.setColour(lnf->c(UltimateLNF::ok).withAlpha(0.4f)); g.fillEllipse(cx - rad, cy - rad, rad * 2, rad * 2); }
         };
     drawPower(bActiveDyn); drawPower(bActiveDet); drawPower(bActiveCrest);
     drawPower(bActiveTpFlux); drawPower(bActiveSat); drawPower(bActiveEq);
@@ -598,7 +623,7 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
             auto r = c.getBoundsInParent();
             auto rEditor = r + p->getPosition();
 
-            g.setColour(lnfStd.c(UltimateLNF::text2));
+            g.setColour(lnf->c(UltimateLNF::text2));
             g.setFont(juce::FontOptions(10.0f).withStyle("bold"));
             juce::Rectangle<int> labelRect(rEditor.getX(), rEditor.getY() - 12, rEditor.getWidth(), 12);
             g.drawText(text, labelRect, juce::Justification::centred);
@@ -606,7 +631,10 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         };
     drawLabel(cAutoRel, "RELEASE"); drawLabel(cThrust, "THRUST"); drawLabel(cCtrlMode, "CONTROL");
     drawLabel(cFluxMode, "FLUX"); drawLabel(cTpMode, "Priority"); drawLabel(cSatMode, "TRANSFORMER");
-    drawLabel(cSatAutoGain, "AUTOGAIN"); drawLabel(cSignalFlow, "FLOW");
+    drawLabel(cSatAutoGain, "SAT-AGC"); drawLabel(cSignalFlow, "FLOW");
+
+    // Draw Label for new Comp Auto-Gain
+    drawLabel(cCompAutoGain, "AGC");
 
     // Labels for the integrated controls
     drawLabel(cScMode, "INPUT");
@@ -658,10 +686,16 @@ void UltimateCompAudioProcessorEditor::resized()
         auto bar = bot.withWidth(barW).withHeight(barH);
         bar.setX(bot.getCentreX() - barW / 2); bar.setY(bot.getY() + (bot.getHeight() - barH) / 2);
         grBarArea = bar.translated(panelDyn->getX(), panelDyn->getY());
+
         auto botRight = bot.removeFromRight(comboW + si(10.0f));
         cAutoRel.setBounds(botRight.withSizeKeepingCentre(comboW, comboH));
+
+        // NEW: Place Comp Auto-Gain Combo to the left of GR bar
+        auto botLeft = bot.removeFromLeft(comboW + si(10.0f));
+        cCompAutoGain.setBounds(botLeft.withSizeKeepingCentre(comboW, comboH));
+
         auto topStrip = cLocal.removeFromTop(si(24.0f));
-        const int colW = cLocal.getWidth() / 7;
+        const int colW = cLocal.getWidth() / 8;
         placeKnob(kThresh.get(), cLocal.removeFromLeft(colW)); placeKnob(kRatio.get(), cLocal.removeFromLeft(colW));
         placeKnob(kKnee.get(), cLocal.removeFromLeft(colW));
         auto rAttackSlot = cLocal.removeFromLeft(colW); placeKnob(kAttack.get(), rAttackSlot);
@@ -669,9 +703,12 @@ void UltimateCompAudioProcessorEditor::resized()
         bTurboAtt.setBounds(rAttackSlot.getX() + (rAttackSlot.getWidth() - btnW) / 2, kAttack->getY() - btnH - si(4), btnW, btnH);
         auto rReleaseSlot = cLocal.removeFromLeft(colW); placeKnob(kRelease.get(), rReleaseSlot);
         bTurboRel.setBounds(rReleaseSlot.getX() + (rReleaseSlot.getWidth() - btnW) / 2, kRelease->getY() - btnH - si(4), btnW, btnH);
-        auto rMakeupSlot = cLocal.removeFromLeft(colW); placeKnob(kMakeup.get(), rMakeupSlot);
+
+        placeKnob(kCompInput.get(), cLocal.removeFromLeft(colW));
+        auto rMake = cLocal.removeFromLeft(colW); placeKnob(kMakeup.get(), rMake);
         int autoW = si(40.0f);
-        bAutoMakeup.setBounds(rMakeupSlot.getX() + (rMakeupSlot.getWidth() - autoW) / 2, kMakeup->getY() - btnH - si(4), autoW, btnH);
+        bCompMirror.setBounds(rMake.getX() + (rMake.getWidth() - autoW) / 2, kMakeup->getY() - btnH - si(4), autoW, btnH);
+
         placeKnob(kMix.get(), cLocal.removeFromLeft(colW));
     }
 
@@ -688,24 +725,26 @@ void UltimateCompAudioProcessorEditor::resized()
         auto bot = c.removeFromBottom(si(44.0f));
         cThrust.setBounds(bot.removeFromRight(comboW).withSizeKeepingCentre(comboW, comboH));
 
-        // PLACEMENT OF NEW INTEGRATED COMBOS
-        // We have two combos: cScMode (Input) and cMsMode (M/S Routing)
-        // We place them at the bottom left of the panel
-
-        int smallComboW = si(70.0f); // Slightly smaller width to fit nicely
-
-        auto botLeft = bot.removeFromLeft(smallComboW * 2 + si(10.0f)); // Reserve space
+        int smallComboW = si(70.0f);
+        const int badgeW = si(64.0f);
+        const int badgeH = comboH;
+        const int leftNeeded = smallComboW + (si(40.0f) * 2) + badgeW + smallComboW + si(12.0f);
+        auto botLeft = bot.removeFromLeft(leftNeeded);
 
         cScMode.setBounds(botLeft.removeFromLeft(smallComboW).withSizeKeepingCentre(smallComboW, comboH));
+        bScToComp.setBounds(botLeft.removeFromLeft(si(40.0f)).withSizeKeepingCentre(si(38.0f), badgeH));
+        bScToSat.setBounds(botLeft.removeFromLeft(si(40.0f)).withSizeKeepingCentre(si(38.0f), badgeH));
+        bScAudition.setBounds(botLeft.removeFromLeft(badgeW).withSizeKeepingCentre(badgeW, badgeH));
         cMsMode.setBounds(botLeft.removeFromLeft(smallComboW).withSizeKeepingCentre(smallComboW, comboH));
 
-        // Now we have 5 knobs (LC, HC, RMS, Link, Blend)
-        const int w = c.getWidth() / 5;
+        const int w = c.getWidth() / 7;
         placeKnob(kScHpf.get(), c.removeFromLeft(w));
-        placeKnob(kScLpf.get(), c.removeFromLeft(w)); // HC Added
+        placeKnob(kScLpf.get(), c.removeFromLeft(w));
         placeKnob(kDetRms.get(), c.removeFromLeft(w));
         placeKnob(kStereoLink.get(), c.removeFromLeft(w));
-        placeKnob(kFbBlend.get(), c);
+        placeKnob(kMsBalance.get(), c.removeFromLeft(w));
+        placeKnob(kFbBlend.get(), c.removeFromLeft(w));
+        placeKnob(kScLevel.get(), c);
     }
 
     {

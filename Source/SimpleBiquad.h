@@ -16,6 +16,19 @@ struct SimpleBiquad {
     // Modern constant replacement for M_PI
     static constexpr double PI_CONST = 3.14159265358979323846;
 
+    static inline double clampFreq(double freq, double sr)
+    {
+        const double nyq = 0.5 * sr;
+        const double maxF = std::max(1.0, nyq * 0.49);
+        return std::min(std::max(freq, 1.0), maxF);
+    }
+
+    static inline double clampQ(double Q)
+    {
+        if (!std::isfinite(Q)) return 0.707;
+        return std::min(std::max(Q, 0.1), 20.0);
+    }
+
     // Coefficients
     double b0 = 0.0, b1 = 0.0, b2 = 0.0;
     double a1 = 0.0, a2 = 0.0;
@@ -50,6 +63,13 @@ struct SimpleBiquad {
     void update_shelf(double freq, double gain_db, double Q, double sr) {
         if (sr <= 0.0) return;
 
+
+
+        freq = clampFreq(freq, sr);
+        Q = clampQ(Q);
+        // Shelf formula here behaves like a slope control; keep it in a stable range.
+        Q = std::min(Q, 1.0);
+        if (!std::isfinite(gain_db)) gain_db = 0.0;
         double A = std::pow(10.0, gain_db / 40.0);
         double w0 = 2.0 * PI_CONST * freq / sr;
         double cos_w0 = std::cos(w0);
@@ -76,6 +96,11 @@ struct SimpleBiquad {
     void update_peak(double freq, double gain_db, double Q, double sr) {
         if (sr <= 0.0) return;
 
+
+
+        freq = clampFreq(freq, sr);
+        Q = clampQ(Q);
+        if (!std::isfinite(gain_db)) gain_db = 0.0;
         double A = std::pow(10.0, gain_db / 40.0);
         double w0 = 2.0 * PI_CONST * freq / sr;
         double cos_w0 = std::cos(w0);
@@ -100,6 +125,10 @@ struct SimpleBiquad {
     void update_hpf(double freq, double Q, double sr) {
         if (sr <= 0.0) return;
 
+
+
+        freq = clampFreq(freq, sr);
+        Q = clampQ(Q);
         double w0 = 2.0 * PI_CONST * freq / sr;
         double cos_w0 = std::cos(w0);
         double alpha = std::sin(w0) / (2.0 * Q);
@@ -123,6 +152,10 @@ struct SimpleBiquad {
     void update_lpf(double freq, double Q, double sr) {
         if (sr <= 0.0) return;
 
+
+
+        freq = clampFreq(freq, sr);
+        Q = clampQ(Q);
         double w0 = 2.0 * PI_CONST * freq / sr;
         double cos_w0 = std::cos(w0);
         double alpha = std::sin(w0) / (2.0 * Q);
