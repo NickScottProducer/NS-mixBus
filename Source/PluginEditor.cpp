@@ -7,6 +7,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cmath>
+#include <functional>
 
 //=============================================================================
 static inline juce::Rectangle<float> shrinkToSquare(juce::Rectangle<float> r)
@@ -39,6 +40,11 @@ public:
         setColour(juce::TextEditor::backgroundColourId, c(bgB));
         setColour(juce::TextEditor::textColourId, c(white));
         setColour(juce::TextEditor::highlightColourId, c(accent).withAlpha(0.4f));
+
+        // Tooltip Colors
+        setColour(juce::TooltipWindow::backgroundColourId, c(bgB).darker());
+        setColour(juce::TooltipWindow::textColourId, c(text));
+        setColour(juce::TooltipWindow::outlineColourId, c(accent));
     }
 
     enum Palette { bgA, bgB, panel, panel2, edge, text, text2, accent, accent2, ok, warn, white, line };
@@ -63,8 +69,12 @@ public:
         return juce::Colours::red;
     }
 
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height, float sliderPosProportional, float rotaryStartAngle, float rotaryEndAngle, juce::Slider&) override
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height, float sliderPosProportional, float rotaryStartAngle, float rotaryEndAngle, juce::Slider& slider) override
     {
+        // Handle Disabled Appearance
+        if (!slider.isEnabled())
+            g.setOpacity(0.4f);
+
         auto bounds = shrinkToSquare(juce::Rectangle<float>((float)x, (float)y, (float)width, (float)height)).reduced(2.0f);
         const float radius = bounds.getWidth() * 0.5f;
         const auto centre = bounds.getCentre();
@@ -95,15 +105,44 @@ public:
         float dotY = centre.y + std::sin(angle - juce::MathConstants<float>::halfPi) * dotDist;
         g.setColour(c(accent2));
         g.fillEllipse(dotX - dotR, dotY - dotR, dotR * 2, dotR * 2);
+
+        // Reset opacity for subsequent drawing
+        g.setOpacity(1.0f);
     }
 
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool, bool) override
     {
+        if (b.getButtonText() == "?") {
+            // Special "Help" button style
+            auto r = b.getLocalBounds().toFloat().reduced(4.0f);
+
+            if (b.getToggleState())
+            {
+                // ENABLED: Illuminated Purple Fill
+                g.setColour(c(accent));
+                g.fillEllipse(r);
+                g.setColour(c(white)); // Text White
+            }
+            else
+            {
+                // DISABLED: Grey Outline / Empty
+                g.setColour(c(bgB));
+                g.fillEllipse(r);
+                g.setColour(c(text2));
+                g.drawEllipse(r, 1.5f);
+            }
+
+            g.setFont(juce::FontOptions(14.0f).withStyle("bold"));
+            g.drawText("?", r, juce::Justification::centred);
+            return;
+        }
+
         if (b.getButtonText().isEmpty()) return;
         auto r = b.getLocalBounds().toFloat().reduced(2.0f);
 
         // ALLOW LONGER TEXT FOR BADGES like "Mirror" or "SC->Comp"
-        bool isSmall = b.getButtonText().length() <= 10;
+        // UPDATED: Threshold increased to accommodate "Faster/Harder"
+        bool isSmall = b.getButtonText().length() <= 16;
 
         const float boxW = isSmall ? r.getWidth() : 32.0f;
         auto box = r;
@@ -165,7 +204,12 @@ public:
         valueLabel.setColour(juce::TextEditor::textColourId, lnf.c(UltimateLNF::white));
         valueLabel.setColour(juce::TextEditor::backgroundColourId, lnf.c(UltimateLNF::bgB));
 
-        valueLabel.onTextChange = [this] { float val = valueLabel.getText().getFloatValue(); slider.setValue(val, juce::sendNotification); };
+        valueLabel.onTextChange = [this]
+            {
+                const auto t = valueLabel.getText();
+                const double val = valueParser ? valueParser(t) : t.getDoubleValue();
+                slider.setValue(val, juce::sendNotification);
+            };
         addAndMakeVisible(valueLabel);
         slider.onValueChange = [this] { updateLabelText(); if (onValChange) onValChange(); };
     }
@@ -173,6 +217,7 @@ public:
     juce::Slider& getSlider() noexcept { return slider; }
     void setUnitSuffix(juce::String s) { suffix = std::move(s); }
     void setTextFromValue(std::function<juce::String(double)> fn) { textFromValue = std::move(fn); }
+    void setValueParser(std::function<double(const juce::String&)> fn) { valueParser = std::move(fn); }
     std::function<void()> onValChange;
     void updateLabelText() {
         double v = slider.getValue();
@@ -181,6 +226,9 @@ public:
         valueLabel.setText(s, juce::dontSendNotification);
     }
     void paint(juce::Graphics& g) override {
+        // Handle Disabled Appearance
+        if (!isEnabled()) g.setOpacity(0.4f);
+
         auto b = getLocalBounds();
         const int textH = juce::jlimit(12, 20, (int)std::lround(getHeight() * 0.18f));
         auto top = b.removeFromTop(textH);
@@ -188,6 +236,9 @@ public:
         g.setColour(lnf.c(UltimateLNF::text2));
         g.setFont(juce::FontOptions(fontPx));
         g.drawFittedText(labelTitle, top, juce::Justification::centred, 1);
+
+        // Reset Opacity
+        g.setOpacity(1.0f);
     }
     void resized() override {
         const int textH = juce::jlimit(12, 20, (int)std::lround(getHeight() * 0.18f));
@@ -204,6 +255,7 @@ private:
     juce::Slider slider;
     juce::Label valueLabel;
     std::function<juce::String(double)> textFromValue;
+    std::function<double(const juce::String&)> valueParser;
 };
 
 //=============================================================================
@@ -247,7 +299,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
 {
     lnf = std::make_unique<UltimateLNF>();
 
-    // LOAD LOGO: Ensure 'logo.png' is added to Projucer BinaryData!
+    // LOAD LOGO
     pluginLogo = juce::ImageCache::getFromMemory(BinaryData::logo_png, BinaryData::logo_pngSize);
 
     setLookAndFeel(lnf.get());
@@ -267,35 +319,29 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kRelease = makeKnob("Release", *lnf);
     kRelease->setTextFromValue([this](double v) { return juce::String(bTurboRel.getToggleState() ? (v * 0.1) : v, 2) + " ms"; });
 
-    // Compressor Input & Makeup
     kCompInput = makeKnob("Input", *lnf); kCompInput->setUnitSuffix("dB");
-
-    // PHYSICAL MIRROR LOGIC FOR INPUT KNOB
     kCompInput->onValChange = [this] {
         kCompInput->updateLabelText();
-
-        // This physically moves the output knob if mirror is ON
         float currentVal = (float)kCompInput->getSlider().getValue();
         if (bCompMirror.getToggleState() && !ignoreCallbacks) {
-            ignoreCallbacks = true; // prevent recursion loop
+            ignoreCallbacks = true;
             float delta = currentVal - lastCompInputVal;
-            // Move Output inversely
             double newMakeup = kMakeup->getSlider().getValue() - delta;
             kMakeup->getSlider().setValue(newMakeup, juce::sendNotificationSync);
             ignoreCallbacks = false;
         }
-        lastCompInputVal = currentVal;
+        if (auto* param = audioProcessor.apvts.getParameter("comp_input"))
+            lastCompInputVal = param->convertFrom0to1(param->getValue());
         };
 
     kMakeup = makeKnob("Output", *lnf); kMakeup->setUnitSuffix("dB");
     kMix = makeKnob("Mix", *lnf); kMix->setUnitSuffix("%");
 
-    // Sidechain Knobs
     kScHpf = makeKnob("Low Cut", *lnf); kScHpf->setUnitSuffix("Hz");
     kScLpf = makeKnob("High Cut", *lnf); kScLpf->setUnitSuffix("Hz");
     kDetRms = makeKnob("RMS Window", *lnf); kDetRms->setUnitSuffix("ms");
     kStereoLink = makeKnob("Link", *lnf); kStereoLink->setUnitSuffix("%");
-    kMsBalance = makeKnob("M/S Bal", *lnf); kMsBalance->setUnitSuffix("dB"); // NEW
+    kMsBalance = makeKnob("M/S Bal", *lnf); kMsBalance->setUnitSuffix("dB");
     kFbBlend = makeKnob("FB Blend", *lnf); kFbBlend->setUnitSuffix("%");
     kScLevel = makeKnob("SC Level", *lnf); kScLevel->setUnitSuffix("dB");
 
@@ -308,6 +354,24 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kSatDrive = makeKnob("Drive", *lnf); kSatDrive->setUnitSuffix("dB");
     kSatTrim = makeKnob("Trim", *lnf); kSatTrim->setUnitSuffix("dB");
     kSatMix = makeKnob("Mix", *lnf); kSatMix->setUnitSuffix("%");
+
+    kGirth = makeKnob("Girth", *lnf); kGirth->setUnitSuffix("dB");
+    kGirthFreq = makeKnob("Freq", *lnf); kGirthFreq->setUnitSuffix("Hz");
+    kGirthFreq->setTextFromValue([](double v) {
+        static const int freqs[4] = { 20, 30, 60, 100 };
+        int idx = (int)std::lround(v); idx = juce::jlimit(0, 3, idx);
+        return juce::String(freqs[idx]);
+        });
+    kGirthFreq->setValueParser([](const juce::String& s) -> double {
+        const auto digits = s.retainCharacters("0123456789");
+        const int typed = digits.getIntValue();
+        static const int freqs[4] = { 20, 30, 60, 100 };
+        if (typed >= 0 && typed <= 3 && digits.length() <= 1) return (double)typed;
+        int bestIdx = 0; int bestDist = std::abs(typed - freqs[0]);
+        for (int i = 1; i < 4; ++i) { const int d = std::abs(typed - freqs[i]); if (d < bestDist) { bestDist = d; bestIdx = i; } }
+        return (double)bestIdx;
+        });
+
     kTone = makeKnob("Tilt", *lnf); kTone->setUnitSuffix("dB");
     kToneFreq = makeKnob("Freq", *lnf); kToneFreq->setUnitSuffix("Hz");
     kBright = makeKnob("Air", *lnf); kBright->setUnitSuffix("dB");
@@ -321,10 +385,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
         };
 
     prepCombo(cAutoRel); cAutoRel.addItem("Manual", 1); cAutoRel.addItem("Auto", 2);
-
-    // NEW: Compressor Auto-Gain Control
     prepCombo(cCompAutoGain); cCompAutoGain.addItem("AGC Off", 1); cCompAutoGain.addItem("Partial", 2); cCompAutoGain.addItem("Full", 3);
-
     prepCombo(cThrust); cThrust.addItem("Normal", 1); cThrust.addItem("Med", 2); cThrust.addItem("Loud", 3);
     prepCombo(cCtrlMode); cCtrlMode.addItem("Manual", 1); cCtrlMode.addItem("Auto", 2);
     prepCombo(cTpMode); cTpMode.addItem("Off", 1); cTpMode.addItem("On", 2);
@@ -333,21 +394,28 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     prepCombo(cSignalFlow); cSignalFlow.addItem("Comp>Sat", 1); cSignalFlow.addItem("Sat>Comp", 2);
     prepCombo(cSatAutoGain); cSatAutoGain.addItem("Off", 1); cSatAutoGain.addItem("Partial", 2); cSatAutoGain.addItem("Full", 3);
 
-    // SIDECHAIN INTEGRATED COMBOS
     prepCombo(cScMode); cScMode.addItem("In", 1); cScMode.addItem("Ext", 2);
     prepCombo(cMsMode); cMsMode.addItem("Link", 1); cMsMode.addItem("Mid", 2); cMsMode.addItem("Side", 3);
     cMsMode.addItem("M>S", 4); cMsMode.addItem("S>M", 5);
 
-    bTurboAtt.setButtonText("F"); bTurboAtt.setClickingTogglesState(true); bTurboAtt.onClick = [this] { kAttack->updateLabelText(); };
-    bTurboRel.setButtonText("F"); bTurboRel.setClickingTogglesState(true); bTurboRel.onClick = [this] { kRelease->updateLabelText(); };
+    // CHANGED: "F" -> "Faster/Harder"
+    bTurboAtt.setButtonText("Faster/Harder"); bTurboAtt.setClickingTogglesState(true); bTurboAtt.onClick = [this] { kAttack->updateLabelText(); };
+    bTurboRel.setButtonText("Faster/Harder"); bTurboRel.setClickingTogglesState(true); bTurboRel.onClick = [this] { kRelease->updateLabelText(); };
 
     bMirror.setButtonText("Mirror"); bMirror.setClickingTogglesState(true);
     bCompMirror.setButtonText("Mirror"); bCompMirror.setClickingTogglesState(true);
 
-    // Routing Toggles
     bScToComp.setButtonText("SC->Comp"); bScToComp.setClickingTogglesState(true);
-    bScToSat.setButtonText("SC->Sat"); bScToSat.setClickingTogglesState(true);
-    bScAudition.setButtonText("Audition"); bScAudition.setClickingTogglesState(true);
+
+    bHelp.setButtonText("?");
+    bHelp.setClickingTogglesState(true);
+    bHelp.setTooltip("Enable/Disable Tooltips");
+    bHelp.onClick = [this] {
+        bool show = bHelp.getToggleState();
+        if (show) tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 400);
+        else tooltipWindow.reset();
+        };
+    addAndMakeVisible(bHelp);
 
     // --- 3. Panels ---
     panelDyn = std::make_unique<Panel>("Main Dynamics", *lnf);
@@ -357,50 +425,32 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     panelSat = std::make_unique<Panel>("Saturation", *lnf);
     panelEq = std::make_unique<Panel>("Color EQ", *lnf);
 
-    addAndMakeVisible(*panelDyn);
-    addAndMakeVisible(*panelDet);
-    addAndMakeVisible(*panelCrest);
-    addAndMakeVisible(*panelTpFlux);
-    addAndMakeVisible(*panelSat);
-    addAndMakeVisible(*panelEq);
+    addAndMakeVisible(*panelDyn); addAndMakeVisible(*panelDet); addAndMakeVisible(*panelCrest);
+    addAndMakeVisible(*panelTpFlux); addAndMakeVisible(*panelSat); addAndMakeVisible(*panelEq);
 
-    // --- 4. Bypass Buttons ---
-    auto setupPowerBtn = [&](juce::ToggleButton& b, juce::String paramId, std::unique_ptr<ButtonAttachment>& att) {
-        b.setButtonText(""); b.setClickingTogglesState(true);
+    auto setupPowerBtn = [&](juce::ToggleButton& b, juce::String paramId, std::unique_ptr<ButtonAttachment>& att, juce::String tip) {
+        b.setButtonText(""); b.setClickingTogglesState(true); b.setTooltip(tip);
         att = std::make_unique<ButtonAttachment>(audioProcessor.apvts, paramId, b);
         addAndMakeVisible(b);
         };
-    setupPowerBtn(bActiveDyn, "active_dyn", aActiveDyn);
-    setupPowerBtn(bActiveDet, "active_det", aActiveDet);
-    setupPowerBtn(bActiveCrest, "active_crest", aActiveCrest);
-    setupPowerBtn(bActiveTpFlux, "active_tf", aActiveTpFlux);
-    setupPowerBtn(bActiveSat, "active_sat", aActiveSat);
-    setupPowerBtn(bActiveEq, "active_eq", aActiveEq);
+    setupPowerBtn(bActiveDyn, "active_dyn", aActiveDyn, "Bypass Compressor Module");
+    setupPowerBtn(bActiveDet, "active_det", aActiveDet, "Bypass Sidechain Filtering");
+    setupPowerBtn(bActiveCrest, "active_crest", aActiveCrest, "Bypass Crest Control");
+    setupPowerBtn(bActiveTpFlux, "active_tf", aActiveTpFlux, "Bypass Transient/Flux");
+    setupPowerBtn(bActiveSat, "active_sat", aActiveSat, "Bypass Saturation Module");
+    setupPowerBtn(bActiveEq, "active_eq", aActiveEq, "Bypass EQ Module");
 
     // --- 5. Add Children ---
     panelDyn->addAndMakeVisible(*kThresh); panelDyn->addAndMakeVisible(*kRatio); panelDyn->addAndMakeVisible(*kKnee);
     panelDyn->addAndMakeVisible(*kAttack); panelDyn->addAndMakeVisible(bTurboAtt);
     panelDyn->addAndMakeVisible(*kRelease); panelDyn->addAndMakeVisible(bTurboRel);
-
-    // Compressor Input/Output/Mix
     panelDyn->addAndMakeVisible(*kCompInput); panelDyn->addAndMakeVisible(*kMakeup);
-    panelDyn->addAndMakeVisible(bCompMirror);
-    panelDyn->addAndMakeVisible(cCompAutoGain); // Added to panel
-
+    panelDyn->addAndMakeVisible(bCompMirror); panelDyn->addAndMakeVisible(cCompAutoGain);
     panelDyn->addAndMakeVisible(*kMix); panelDyn->addAndMakeVisible(cAutoRel);
 
-    // Sidechain Panel Children
-    panelDet->addAndMakeVisible(*kScHpf);
-    panelDet->addAndMakeVisible(*kScLpf);
-    panelDet->addAndMakeVisible(*kDetRms);
-    panelDet->addAndMakeVisible(*kStereoLink); panelDet->addAndMakeVisible(*kMsBalance); panelDet->addAndMakeVisible(*kFbBlend); panelDet->addAndMakeVisible(*kScLevel); // NEW
-    panelDet->addAndMakeVisible(cThrust);
-    panelDet->addAndMakeVisible(cScMode);
-    panelDet->addAndMakeVisible(cMsMode);
-    // Add Routing Toggles to Det Panel
-    panelDet->addAndMakeVisible(bScToComp);
-    panelDet->addAndMakeVisible(bScToSat);
-    panelDet->addAndMakeVisible(bScAudition);
+    panelDet->addAndMakeVisible(*kScHpf); panelDet->addAndMakeVisible(*kScLpf); panelDet->addAndMakeVisible(*kDetRms);
+    panelDet->addAndMakeVisible(*kStereoLink); panelDet->addAndMakeVisible(*kMsBalance); panelDet->addAndMakeVisible(*kFbBlend); panelDet->addAndMakeVisible(*kScLevel);
+    panelDet->addAndMakeVisible(cThrust); panelDet->addAndMakeVisible(cScMode); panelDet->addAndMakeVisible(cMsMode); panelDet->addAndMakeVisible(bScToComp);
 
     panelCrest->addAndMakeVisible(*kCrestTarget); panelCrest->addAndMakeVisible(*kCrestSpeed); panelCrest->addAndMakeVisible(cCtrlMode);
     panelTpFlux->addAndMakeVisible(*kTpAmt); panelTpFlux->addAndMakeVisible(*kTpRaise); panelTpFlux->addAndMakeVisible(*kFluxAmt);
@@ -410,57 +460,71 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     panelSat->addAndMakeVisible(*kSatMix); panelSat->addAndMakeVisible(cSatMode); panelSat->addAndMakeVisible(cSatAutoGain);
     panelSat->addAndMakeVisible(cSignalFlow); panelSat->addAndMakeVisible(bMirror);
 
+    panelEq->addAndMakeVisible(*kGirth); panelEq->addAndMakeVisible(*kGirthFreq);
     panelEq->addAndMakeVisible(*kTone); panelEq->addAndMakeVisible(*kToneFreq);
     panelEq->addAndMakeVisible(*kBright); panelEq->addAndMakeVisible(*kBrightFreq);
 
     // --- 6. Bindings ---
-    bindKnob(*kThresh, aThresh, "thresh", "dB"); bindKnob(*kRatio, aRatio, "ratio", ""); bindKnob(*kKnee, aKnee, "knee", "dB");
-    bindKnob(*kAttack, aAttack, "att_ms", "ms"); bindKnob(*kRelease, aRelease, "rel_ms", "ms");
-    bindKnob(*kCompInput, aCompInput, "comp_input", "dB");
+    bindKnob(*kThresh, aThresh, "thresh", "dB", "Level where compression begins");
+    bindKnob(*kRatio, aRatio, "ratio", "", "Amount of gain reduction applied");
+    bindKnob(*kKnee, aKnee, "knee", "dB", "Softness of the threshold transition");
+    bindKnob(*kAttack, aAttack, "att_ms", "ms", "How fast compression engages");
+    bindKnob(*kRelease, aRelease, "rel_ms", "ms", "How fast compression recovers");
+    bindKnob(*kCompInput, aCompInput, "comp_input", "dB", "Input Drive into Compressor");
 
-    // Store initial value for tracking
-    if (auto* p = audioProcessor.apvts.getParameter("comp_input"))
-        lastCompInputVal = p->convertFrom0to1(p->getValue());
+    if (auto* param = audioProcessor.apvts.getParameter("comp_input"))
+        lastCompInputVal = param->convertFrom0to1(param->getValue());
 
-    bindKnob(*kMakeup, aMakeup, "makeup", "dB"); bindKnob(*kMix, aMix, "dry_wet", "%");
+    bindKnob(*kMakeup, aMakeup, "makeup", "dB", "Output Gain (Makeup)");
+    bindKnob(*kMix, aMix, "dry_wet", "%", "Parallel Mix blend");
+    bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz", "Sidechain Low Cut Filter");
+    bindKnob(*kScLpf, aScLpf, "sc_lp_freq", "Hz", "Sidechain High Cut Filter");
+    bindKnob(*kDetRms, aDetRms, "det_rms", "ms", "RMS Window length for detector");
+    bindKnob(*kStereoLink, aStereoLink, "stereo_link", "%", "Links Left/Right detection");
+    bindKnob(*kMsBalance, aMsBalance, "ms_balance", "dB", "M/S Balance offset for Cross-comp modes");
+    bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%", "Blend between Feed-Forward and Feed-Back");
+    bindKnob(*kScLevel, aScLevel, "sc_level_db", "dB", "Trim the Sidechain signal level");
+    bindKnob(*kCrestTarget, aCrestTarget, "crest_target", "dB", "Target Crest Factor (Peak vs RMS difference)");
+    bindKnob(*kCrestSpeed, aCrestSpeed, "crest_speed", "ms", "Reaction speed of Crest controller");
+    bindKnob(*kTpAmt, aTpAmt, "tp_amount", "%", "Amount of transient preservation");
+    bindKnob(*kTpRaise, aTpRaise, "tp_thresh_raise", "dB", "How much to raise threshold for transients");
+    bindKnob(*kFluxAmt, aFluxAmt, "flux_amount", "%", "Couples Saturation drive to Compression threshold");
+    bindKnob(*kSatPre, aSatPre, "sat_pre_gain", "dB", "Input gain into Saturation");
+    bindKnob(*kSatDrive, aSatDrive, "sat_drive", "dB", "Drive amount for Transformer");
+    bindKnob(*kSatTrim, aSatTrim, "sat_trim", "dB", "Post-Saturation output trim");
+    bindKnob(*kSatMix, aSatMix, "sat_mix", "%", "Blend of Clean vs Saturated signal");
+    bindKnob(*kGirth, aGirth, "girth", "dB", "Pultec-style low-end: resonant boost + dip");
+    bindKnob(*kGirthFreq, aGirthFreq, "girth_freq", "Hz", "Girth frequency selector (20/30/60/100 Hz)");
+    bindKnob(*kTone, aTone, "sat_tone", "dB", "Tilt EQ gain");
+    bindKnob(*kToneFreq, aToneFreq, "sat_tone_freq", "Hz", "Tilt EQ Center Frequency");
+    bindKnob(*kBright, aBright, "harm_bright", "dB", "High Shelf Air gain");
+    bindKnob(*kBrightFreq, aBrightFreq, "harm_freq", "Hz", "High Shelf Frequency");
 
-    bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz");
-    bindKnob(*kScLpf, aScLpf, "sc_lp_freq", "Hz");
-    bindKnob(*kDetRms, aDetRms, "det_rms", "ms");
-    bindKnob(*kStereoLink, aStereoLink, "stereo_link", "%");
-    bindKnob(*kMsBalance, aMsBalance, "ms_balance", "dB"); // NEW
-    bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%");
-    bindKnob(*kScLevel, aScLevel, "sc_level_db", "dB");
+    initCombo(cAutoRel, aAutoRel, "auto_rel", "Program Dependent Release");
+    initCombo(cCompAutoGain, aCompAutoGain, "comp_autogain", "Automatic Makeup Gain");
+    initCombo(cThrust, aThrust, "thrust_mode", "Sidechain weighting (Pink Noise)");
+    initCombo(cCtrlMode, aCtrlMode, "ctrl_mode", "Enables Auto-Crest control");
+    initCombo(cTpMode, aTpMode, "tp_mode", "Enables Transient Priority");
+    initCombo(cFluxMode, aFluxMode, "flux_mode", "Enables Flux Coupling");
+    initCombo(cSatMode, aSatMode, "sat_mode", "Transformer Color Model");
+    initCombo(cSatAutoGain, aSatAutoGain, "sat_autogain", "Maintains unity gain through Saturation");
+    initCombo(cSignalFlow, aSignalFlow, "signal_flow", "Order of processing modules");
+    initCombo(cScMode, cScModeAtt, "sc_mode", "Internal or External Sidechain source");
+    initCombo(cMsMode, aMsMode, "ms_mode", "Mid/Side processing mode");
 
-    bindKnob(*kCrestTarget, aCrestTarget, "crest_target", "dB"); bindKnob(*kCrestSpeed, aCrestSpeed, "crest_speed", "ms");
-    bindKnob(*kTpAmt, aTpAmt, "tp_amount", "%"); bindKnob(*kTpRaise, aTpRaise, "tp_thresh_raise", "dB");
-    bindKnob(*kFluxAmt, aFluxAmt, "flux_amount", "%");
-    bindKnob(*kSatPre, aSatPre, "sat_pre_gain", "dB"); bindKnob(*kSatDrive, aSatDrive, "sat_drive", "dB");
-    bindKnob(*kSatTrim, aSatTrim, "sat_trim", "dB"); bindKnob(*kSatMix, aSatMix, "sat_mix", "%");
-    bindKnob(*kTone, aTone, "sat_tone", "dB"); bindKnob(*kToneFreq, aToneFreq, "sat_tone_freq", "Hz");
-    bindKnob(*kBright, aBright, "harm_bright", "dB"); bindKnob(*kBrightFreq, aBrightFreq, "harm_freq", "Hz");
-
-    initCombo(cAutoRel, aAutoRel, "auto_rel");
-    initCombo(cCompAutoGain, aCompAutoGain, "comp_autogain"); // NEW
-    initCombo(cThrust, aThrust, "thrust_mode");
-    initCombo(cCtrlMode, aCtrlMode, "ctrl_mode");
-    initCombo(cTpMode, aTpMode, "tp_mode");
-    initCombo(cFluxMode, aFluxMode, "flux_mode");
-    initCombo(cSatMode, aSatMode, "sat_mode");
-    initCombo(cSatAutoGain, aSatAutoGain, "sat_autogain");
-    initCombo(cSignalFlow, aSignalFlow, "signal_flow");
-
-    initCombo(cScMode, cScModeAtt, "sc_mode");
-    initCombo(cMsMode, aMsMode, "ms_mode");
-
+    bTurboAtt.setTooltip("10x Faster Attack range");
     aTurboAtt = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_att", bTurboAtt);
+    bTurboRel.setTooltip("10x Faster Release range");
     aTurboRel = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_rel", bTurboRel);
+    bMirror.setTooltip("Links Pre-Gain and Trim inversely");
     aMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sat_mirror", bMirror);
-
+    bCompMirror.setTooltip("Links Input and Output inversely");
     aCompMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "comp_mirror", bCompMirror);
+    bScToComp.setTooltip("Route Sidechain signal to Compressor detector");
     aScToComp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_to_comp", bScToComp);
-    aScToSat = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_to_sat", bScToSat);
-    aScAudition = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_audition", bScAudition);
+    aHelp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "show_help", bHelp);
+
+    if (bHelp.getToggleState()) tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 400);
 
     setResizable(true, true);
     setResizeLimits(1000, 600, 2000, 1200);
@@ -473,32 +537,61 @@ UltimateCompAudioProcessorEditor::~UltimateCompAudioProcessorEditor() {
     setLookAndFeel(nullptr);
 }
 
-void UltimateCompAudioProcessorEditor::bindKnob(Knob& knob, std::unique_ptr<SliderAttachment>& attachment, const juce::String& paramID, const juce::String& suffix)
+void UltimateCompAudioProcessorEditor::bindKnob(Knob& knob, std::unique_ptr<SliderAttachment>& attachment, const juce::String& paramID, const juce::String& suffix, const juce::String& tooltip)
 {
     knob.getSlider().setName(paramID);
+    knob.getSlider().setTooltip(tooltip);
     attachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, paramID, knob.getSlider());
     knob.setUnitSuffix(suffix);
     knob.updateLabelText();
 }
 
-void UltimateCompAudioProcessorEditor::initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment, const juce::String& paramID)
+void UltimateCompAudioProcessorEditor::initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment, const juce::String& paramID, const juce::String& tooltip)
 {
+    box.setTooltip(tooltip);
     attachment = std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, paramID, box);
 }
 
 void UltimateCompAudioProcessorEditor::timerCallback()
 {
     const float decay = 0.85f;
-    if (audioProcessor.meterInL > smoothInL) smoothInL = audioProcessor.meterInL; else smoothInL *= decay;
-    if (audioProcessor.meterInR > smoothInR) smoothInR = audioProcessor.meterInR; else smoothInR *= decay;
-    if (audioProcessor.meterOutL > smoothOutL) smoothOutL = audioProcessor.meterOutL; else smoothOutL *= decay;
-    if (audioProcessor.meterOutR > smoothOutR) smoothOutR = audioProcessor.meterOutR; else smoothOutR *= decay;
-    float gr = audioProcessor.meterGR;
+    const float inL = audioProcessor.meterInL.load(std::memory_order_relaxed);
+    const float inR = audioProcessor.meterInR.load(std::memory_order_relaxed);
+    const float outL = audioProcessor.meterOutL.load(std::memory_order_relaxed);
+    const float outR = audioProcessor.meterOutR.load(std::memory_order_relaxed);
+
+    if (inL > smoothInL)  smoothInL = inL;  else smoothInL *= decay;
+    if (inR > smoothInR)  smoothInR = inR;  else smoothInR *= decay;
+    if (outL > smoothOutL) smoothOutL = outL; else smoothOutL *= decay;
+    if (outR > smoothOutR) smoothOutR = outR; else smoothOutR *= decay;
+
+    const float gr = audioProcessor.meterGR.load(std::memory_order_relaxed);
     smoothGR = (gr < smoothGR) ? gr : (gr * 0.2f + smoothGR * 0.8f);
-    float fl = audioProcessor.meterFlux;
-    if (fl > smoothFlux) smoothFlux = fl; else smoothFlux *= 0.9f;
-    float cr = audioProcessor.meterCrest;
-    if (cr > smoothCrest) smoothCrest = cr; else smoothCrest *= 0.9f;
+
+    const float fl = audioProcessor.meterFlux.load(std::memory_order_relaxed);
+    if (fl > smoothFlux) smoothFlux = fl; else smoothFlux *= decay;
+
+    const float cr = audioProcessor.meterCrest.load(std::memory_order_relaxed);
+    if (cr > smoothCrest) smoothCrest = cr; else smoothCrest *= decay;
+
+    auto updateEnablement = [&](juce::Component& comp, bool shouldEnable) {
+        if (comp.isEnabled() != shouldEnable) comp.setEnabled(shouldEnable);
+        };
+
+    int msMode = (int)*audioProcessor.apvts.getRawParameterValue("ms_mode");
+    updateEnablement(*kMsBalance, msMode != 0);
+    int ctrlMode = (int)*audioProcessor.apvts.getRawParameterValue("ctrl_mode");
+    bool autoCrest = (ctrlMode == 1);
+    updateEnablement(*kCrestTarget, autoCrest);
+    updateEnablement(*kCrestSpeed, autoCrest);
+    int tpMode = (int)*audioProcessor.apvts.getRawParameterValue("tp_mode");
+    bool tpOn = (tpMode == 1);
+    updateEnablement(*kTpAmt, tpOn);
+    updateEnablement(*kTpRaise, tpOn);
+    int fluxMode = (int)*audioProcessor.apvts.getRawParameterValue("flux_mode");
+    bool fluxOn = (fluxMode == 1);
+    updateEnablement(*kFluxAmt, fluxOn);
+
     repaint();
 }
 
@@ -520,14 +613,12 @@ void UltimateCompAudioProcessorEditor::paint(juce::Graphics& g)
 
     if (pluginLogo.isValid())
     {
-        // 1. Draw bigger, brighter logo
         g.setOpacity(1.0f);
         g.drawImageWithin(pluginLogo,
             headerX, headerY, logoSize, logoSize,
             juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize,
             false);
 
-        // 2. Draw "mixBus" text to the right
         g.setColour(lnf->c(UltimateLNF::text));
         g.setFont(juce::FontOptions((float)textHeight).withStyle("bold"));
 
@@ -535,14 +626,15 @@ void UltimateCompAudioProcessorEditor::paint(juce::Graphics& g)
         int textY = headerY + (logoSize - textHeight) / 2;
         int textW = 200;
 
-        g.drawText("mixBus", textX, textY, textW, textHeight, juce::Justification::left);
+        // CHANGED: "bussStuff" -> "NS - bussStuff"
+        g.drawText("bussStuff", textX, textY, textW, textHeight, juce::Justification::left);
     }
     else
     {
-        // Fallback if image load fails
         g.setColour(lnf->c(UltimateLNF::text));
         g.setFont(juce::FontOptions(22.0f).withStyle("bold"));
-        g.drawText("NS - MixBus", 20, 10, 200, 30, juce::Justification::left);
+        // CHANGED: Fallback text updated
+        g.drawText("NS - bussStuff", 20, 10, 200, 30, juce::Justification::left);
     }
 }
 
@@ -608,7 +700,6 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         bool on = b.getToggleState();
         g.setColour(on ? lnf->c(UltimateLNF::ok) : lnf->c(UltimateLNF::text2).withAlpha(0.3f));
         float cx = bR.getCentreX(); float cy = bR.getCentreY(); float rad = 5.0f;
-        // FIXED: Renamed 'p' to 'path' to avoid shadowing warnings
         juce::Path path; path.addArc(cx - rad, cy - rad, rad * 2, rad * 2, 0.5f, 5.8f, true);
         g.strokePath(path, juce::PathStrokeType(1.5f));
         g.drawLine(cx, cy - rad, cx, cy - rad + 4.0f, 1.5f);
@@ -631,14 +722,30 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         };
     drawLabel(cAutoRel, "RELEASE"); drawLabel(cThrust, "THRUST"); drawLabel(cCtrlMode, "CONTROL");
     drawLabel(cFluxMode, "FLUX"); drawLabel(cTpMode, "Priority"); drawLabel(cSatMode, "TRANSFORMER");
-    drawLabel(cSatAutoGain, "SAT-AGC"); drawLabel(cSignalFlow, "FLOW");
-
-    // Draw Label for new Comp Auto-Gain
+    // CHANGED: Label text updated
+    drawLabel(cSatAutoGain, "AGC"); drawLabel(cSignalFlow, "FLOW");
     drawLabel(cCompAutoGain, "AGC");
-
-    // Labels for the integrated controls
     drawLabel(cScMode, "INPUT");
     drawLabel(cMsMode, "M/S ROUTING");
+
+    // --- DRAW CYAN CONNECTION LINES FOR MIRROR ---
+    if (bCompMirror.getToggleState())
+    {
+        // Coordinates relative to Editor
+        auto btnC = bCompMirror.getBounds().getCentre() + panelDyn->getPosition();
+        auto inC = kCompInput->getBounds().getCentre() + panelDyn->getPosition();
+        auto outC = kMakeup->getBounds().getCentre() + panelDyn->getPosition();
+
+        g.setColour(lnf->c(UltimateLNF::ok)); // Cyan
+
+        juce::Path p;
+        p.startNewSubPath(btnC.toFloat());
+        p.lineTo(inC.toFloat());
+        p.startNewSubPath(btnC.toFloat());
+        p.lineTo(outC.toFloat());
+
+        g.strokePath(p, juce::PathStrokeType(2.0f));
+    }
 }
 
 void UltimateCompAudioProcessorEditor::resized()
@@ -655,6 +762,10 @@ void UltimateCompAudioProcessorEditor::resized()
     panelSat->setHeaderHeight(headerH); panelEq->setHeaderHeight(headerH);
 
     auto topBar = r.removeFromTop(si(60.0f));
+
+    const int helpS = si(24.0f);
+    bHelp.setBounds(topBar.getRight() - helpS, topBar.getY() + si(8.0f), helpS, helpS);
+
     const int meterH = si(24.0f); const int meterGap = si(6.0f);
     const int metersTotalWidth = juce::jmin(topBar.getWidth(), si(300.0f));
     auto centerMeters = topBar.withWidth(metersTotalWidth).withX((getWidth() - metersTotalWidth) / 2);
@@ -663,7 +774,10 @@ void UltimateCompAudioProcessorEditor::resized()
     const int rowH = r.getHeight() / 3;
     auto row1 = r.removeFromTop(rowH); auto row2 = r.removeFromTop(rowH); auto row3 = r;
 
-    const int comboH = si(20.0f); const int comboW = si(90.0f);
+    // CHANGED: Increased combo width to ensure text fits
+    const int comboH = si(20.0f);
+    const int comboW = si(110.0f); // Was 90
+
     const int panelPadX = si(2.0f); const int panelPadY = si(5.0f);
     const int fixedKnobW = si(64.0f); const int fixedKnobH = si(74.0f);
 
@@ -690,7 +804,6 @@ void UltimateCompAudioProcessorEditor::resized()
         auto botRight = bot.removeFromRight(comboW + si(10.0f));
         cAutoRel.setBounds(botRight.withSizeKeepingCentre(comboW, comboH));
 
-        // NEW: Place Comp Auto-Gain Combo to the left of GR bar
         auto botLeft = bot.removeFromLeft(comboW + si(10.0f));
         cCompAutoGain.setBounds(botLeft.withSizeKeepingCentre(comboW, comboH));
 
@@ -704,10 +817,14 @@ void UltimateCompAudioProcessorEditor::resized()
         auto rReleaseSlot = cLocal.removeFromLeft(colW); placeKnob(kRelease.get(), rReleaseSlot);
         bTurboRel.setBounds(rReleaseSlot.getX() + (rReleaseSlot.getWidth() - btnW) / 2, kRelease->getY() - btnH - si(4), btnW, btnH);
 
-        placeKnob(kCompInput.get(), cLocal.removeFromLeft(colW));
+        auto rCompInputSlot = cLocal.removeFromLeft(colW); placeKnob(kCompInput.get(), rCompInputSlot);
         auto rMake = cLocal.removeFromLeft(colW); placeKnob(kMakeup.get(), rMake);
+
+        // CHANGED: Mirror button placement
+        // "in between input and output" horizontally.
+        // We place it centered on the boundary line between the two slots (rMake.getX()).
         int autoW = si(40.0f);
-        bCompMirror.setBounds(rMake.getX() + (rMake.getWidth() - autoW) / 2, kMakeup->getY() - btnH - si(4), autoW, btnH);
+        bCompMirror.setBounds(rMake.getX() - autoW / 2, kMakeup->getY() - btnH - si(4), autoW, btnH);
 
         placeKnob(kMix.get(), cLocal.removeFromLeft(colW));
     }
@@ -725,16 +842,19 @@ void UltimateCompAudioProcessorEditor::resized()
         auto bot = c.removeFromBottom(si(44.0f));
         cThrust.setBounds(bot.removeFromRight(comboW).withSizeKeepingCentre(comboW, comboH));
 
-        int smallComboW = si(70.0f);
-        const int badgeW = si(64.0f);
+        // CHANGED: Widths for Sidechain bottom row controls
+        int smallComboW = si(90.0f); // Was 70
+        const int badgeW = si(70.0f); // Was 38, now fits "SC->Comp"
         const int badgeH = comboH;
-        const int leftNeeded = smallComboW + (si(40.0f) * 2) + badgeW + smallComboW + si(12.0f);
+        const int gap = si(6.0f);
+
+        const int leftNeeded = smallComboW + gap + badgeW + gap + smallComboW + si(12.0f);
         auto botLeft = bot.removeFromLeft(leftNeeded);
 
         cScMode.setBounds(botLeft.removeFromLeft(smallComboW).withSizeKeepingCentre(smallComboW, comboH));
-        bScToComp.setBounds(botLeft.removeFromLeft(si(40.0f)).withSizeKeepingCentre(si(38.0f), badgeH));
-        bScToSat.setBounds(botLeft.removeFromLeft(si(40.0f)).withSizeKeepingCentre(si(38.0f), badgeH));
-        bScAudition.setBounds(botLeft.removeFromLeft(badgeW).withSizeKeepingCentre(badgeW, badgeH));
+        botLeft.removeFromLeft(gap);
+        bScToComp.setBounds(botLeft.removeFromLeft(badgeW).withSizeKeepingCentre(badgeW, badgeH));
+        botLeft.removeFromLeft(gap);
         cMsMode.setBounds(botLeft.removeFromLeft(smallComboW).withSizeKeepingCentre(smallComboW, comboH));
 
         const int w = c.getWidth() / 7;
@@ -768,7 +888,8 @@ void UltimateCompAudioProcessorEditor::resized()
     {
         auto c = panelTpFlux->getContentBounds().reduced(si(2.0f));
         auto bot = c.removeFromBottom(si(44.0f));
-        const int miniSlot = si(70.0f); const int miniW = si(65.0f);
+        // CHANGED: Increased slot size for Flux/TP combos
+        const int miniSlot = si(90.0f); const int miniW = si(85.0f);
         cFluxMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         cTpMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
         const int w = c.getWidth() / 3;
@@ -781,20 +902,36 @@ void UltimateCompAudioProcessorEditor::resized()
         const int dotPadL = si(10.0f); const int dotY = si(8.0f); const int dotS = si(12.0f);
         fluxDotArea = juce::Rectangle<int>(satRect.getX() + dotPadL, satRect.getY() + dotY, dotS, dotS);
         auto bot = c.removeFromBottom(si(44.0f));
-        auto mirrorSlot = bot.removeFromRight(si(50.0f));
-        bMirror.setBounds(mirrorSlot.withSizeKeepingCentre(si(40.0f), si(18.0f)));
-        const int miniSlot = si(70.0f); const int miniW = si(65.0f);
-        cSatMode.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
-        cSatAutoGain.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
-        cSignalFlow.setBounds(bot.removeFromRight(miniSlot).withSizeKeepingCentre(miniW, comboH));
+
+        // CHANGED: Centered Combos
+        const int miniSlot = si(90.0f); const int miniW = si(85.0f);
+        int totalComboW = 3 * miniSlot;
+        int startX = bot.getX() + (bot.getWidth() - totalComboW) / 2;
+
+        cSatMode.setBounds(startX, bot.getY() + (bot.getHeight() - comboH) / 2, miniW, comboH);
+        startX += miniSlot;
+        cSatAutoGain.setBounds(startX, bot.getY() + (bot.getHeight() - comboH) / 2, miniW, comboH);
+        startX += miniSlot;
+        cSignalFlow.setBounds(startX, bot.getY() + (bot.getHeight() - comboH) / 2, miniW, comboH);
+
         const int w = c.getWidth() / 4;
-        placeKnob(kSatPre.get(), c.removeFromLeft(w)); placeKnob(kSatDrive.get(), c.removeFromLeft(w));
+        // Place knobs
+        auto rPre = c.removeFromLeft(w);
+        placeKnob(kSatPre.get(), rPre);
+
+        // CHANGED: Place Mirror button above Pre-Gain Knob
+        // UPDATED: moved Y position to -si(4) to clear the "Pre-Gain" label
+        int btnW = si(40.0f); int btnH = si(18.0f);
+        bMirror.setBounds(rPre.getCentreX() - btnW / 2, rPre.getY() - si(6), btnW, btnH);
+
+        placeKnob(kSatDrive.get(), c.removeFromLeft(w));
         placeKnob(kSatTrim.get(), c.removeFromLeft(w)); placeKnob(kSatMix.get(), c);
     }
 
     {
         auto c = panelEq->getContentBounds().reduced(si(4.0f));
-        const int w = c.getWidth() / 4;
+        const int w = c.getWidth() / 6;
+        placeKnob(kGirth.get(), c.removeFromLeft(w)); placeKnob(kGirthFreq.get(), c.removeFromLeft(w));
         placeKnob(kTone.get(), c.removeFromLeft(w)); placeKnob(kToneFreq.get(), c.removeFromLeft(w));
         placeKnob(kBright.get(), c.removeFromLeft(w)); placeKnob(kBrightFreq.get(), c);
     }

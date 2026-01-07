@@ -7,6 +7,7 @@
     - Fixed Saturator Auto-Gain (Proper Staging)
     - Fixed Feedback Detector Tap
     - FIXED: Member variable naming in Audition Block
+    - UPDATED: Removed SC->Sat, Extended Filter Ranges
   ==============================================================================
 */
 
@@ -41,7 +42,7 @@ public:
     // --- SIDECHAIN EXPERT ---
     int  p_sc_input_mode = 0; // 0 = Internal, 1 = External
     bool p_sc_to_comp = true;
-    bool p_sc_to_sat = false;
+    // REMOVED: p_sc_to_sat
     int  p_ms_mode = 0;
     float p_ms_balance_db = 0.0f; // NEW: M/S balance for cross modes
 
@@ -101,6 +102,10 @@ public:
     float p_harm_bright = 0.0f;
     float p_harm_freq = 4500.0f;
 
+    // --- COLOR EQ (Pultec-style low-end) ---
+    float p_girth = 0.0f;        // dB
+    int   p_girth_freq_sel = 2;  // 0=20,1=30,2=60,3=100
+
     // --- OUTPUT ---
     float p_makeup = 0.0f;
     float p_dry_wet = 100.0f;
@@ -131,10 +136,10 @@ public:
 
         dry_buf.setSize(2, max_block, false, false, true);
         wet_buf.setSize(2, max_block, false, false, true);
-        // Allocate oversampled work buffers at the maximum expected OS size to avoid reallocations in process().
-        sat_clean_buf.setSize(2, max_block * os_factor, false, false, true);
         sc_internal_buf.setSize(2, max_block, false, false, true);
-        sat_proc_buf.setSize(2, max_block * os_factor, false, false, true);
+        // Work buffers are base-rate; Oversampling maintains its own internal up/down buffers.
+        sat_clean_buf.setSize(2, max_block, false, false, true);
+        sat_proc_buf.setSize(2, max_block, false, false, true);
 
         os = std::make_unique<juce::dsp::Oversampling<float>>(
             2, os_stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
@@ -196,9 +201,8 @@ public:
         // Filters
         sc_hp_l.reset(); sc_hp_r.reset(); sc_hp_l_2.reset(); sc_hp_r_2.reset();
         sc_lp_l.reset(); sc_lp_r.reset(); sc_lp_l_2.reset(); sc_lp_r_2.reset();
-        sat_sc_hp_l.reset(); sat_sc_hp_r.reset(); sat_sc_hp_l_2.reset(); sat_sc_hp_r_2.reset();
-        sat_sc_lp_l.reset(); sat_sc_lp_r.reset(); sat_sc_lp_l_2.reset(); sat_sc_lp_r_2.reset();
         sat_tone_l.reset(); sat_tone_r.reset();
+        girth_bump_l.reset(); girth_bump_r.reset(); girth_dip_l.reset(); girth_dip_r.reset();
         harm_pre_l.reset(); harm_pre_r.reset(); harm_post_l.reset(); harm_post_r.reset();
         iron_voicing_l.reset(); iron_voicing_r.reset();
         steel_low_l.reset(); steel_low_r.reset(); steel_high_l.reset(); steel_high_r.reset();
@@ -242,125 +246,207 @@ public:
 
         last_sat_mode = -1;
         last_ctrl_mode = -1;
+
+        // Topology-change click smoothing (start stable)
+        topologyRamp = 1.0;
+        topologyInc = 0.0;
+        prevTopoSatEq = (p_active_sat || p_active_eq);
+        prevTopoFlow = p_signal_flow;
+        prevTopoAudition = p_sc_audition;
+        prevTopoMsMode = p_ms_mode;
+        prevTopoScMode = p_sc_input_mode;
+        prevTopoScToComp = p_sc_to_comp;
+    }
+
+
+    void armTopologyFade() noexcept
+    {
+        const int maxFade = juce::jmax(16, max_block);
+        const int fadeSamples = juce::jlimit(16, maxFade, (int)std::round(0.010 * s_rate)); // 10 ms
+        topologyRamp = 0.0;
+        topologyInc = 1.0 / (double)fadeSamples;
+    }
+
+    void handleTopologyChangeIfNeeded() noexcept
+    {
+        const bool satEq = (p_active_sat || p_active_eq);
+        const bool audition = p_sc_audition;
+        const int flow = p_signal_flow;
+        const int msMode = p_ms_mode;
+        const int scMode = p_sc_input_mode;
+        const bool scToComp = p_sc_to_comp;
+
+        const bool changed =
+            (satEq != prevTopoSatEq) ||
+            (audition != prevTopoAudition) ||
+            (flow != prevTopoFlow) ||
+            (msMode != prevTopoMsMode) ||
+            (scMode != prevTopoScMode) ||
+            (scToComp != prevTopoScToComp);
+
+        if (!changed) return;
+
+        // Reset latency-matching paths and oversampling state; then fade the wet contribution back in.
+        if (os) os->reset();
+        if (os_dry) os_dry->reset();
+
+        satInternalDelay.reset();
+        mainBypassDelayWet.reset();
+        mainBypassDelayDry.reset();
+
+        mainBypassDelayWet.setDelay((float)fixed_latency);
+        mainBypassDelayDry.setDelay((float)fixed_latency);
+
+        armTopologyFade();
+
+        prevTopoSatEq = satEq;
+        prevTopoAudition = audition;
+        prevTopoFlow = flow;
+        prevTopoMsMode = msMode;
+        prevTopoScMode = scMode;
+        prevTopoScToComp = scToComp;
     }
 
     void process(juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>* sidechainBuffer = nullptr)
     {
-        const int nSamp = buffer.getNumSamples();
-        if (nSamp <= 0) return;
+        juce::ScopedNoDenormals noDenormals;
 
-        // 1. Snapshot Input for Dry/Wet mix later
-        dry_buf.setSize(2, nSamp, false, false, true);
-        if (buffer.getNumChannels() == 1) {
-            dry_buf.copyFrom(0, 0, buffer, 0, 0, nSamp);
-            dry_buf.copyFrom(1, 0, buffer, 0, 0, nSamp);
-        }
-        else {
-            dry_buf.makeCopyOf(buffer, true);
-        }
+        const int totalSamples = buffer.getNumSamples();
+        if (totalSamples <= 0) return;
 
-        // 2. Prepare Processing Buffer
-        wet_buf.makeCopyOf(dry_buf, true);
+        // If the host ever delivers a larger-than-expected block, we process it in fixed-size chunks
+        // so we never need to resize/allocate on the audio thread.
+        const int chunkSize = juce::jmax(1, max_block);
 
-        // 3. Prepare Sidechain Buffer
-        sc_internal_buf.setSize(2, nSamp, false, false, true);
-        if (p_sc_input_mode == 1 && sidechainBuffer != nullptr && sidechainBuffer->getNumChannels() > 0) {
-            if (sidechainBuffer->getNumChannels() == 1) {
-                sc_internal_buf.copyFrom(0, 0, *sidechainBuffer, 0, 0, nSamp);
-                sc_internal_buf.copyFrom(1, 0, *sidechainBuffer, 0, 0, nSamp);
-            }
-            else {
-                sc_internal_buf.makeCopyOf(*sidechainBuffer, true);
-            }
-        }
-        else {
-            sc_internal_buf.makeCopyOf(dry_buf, true);
-        }
+        // Smooth transitions for topology-affecting changes (order, routing, oversampling path).
+        handleTopologyChangeIfNeeded();
 
-        smooth_alpha_block = std::exp(-(double)nSamp / (0.020 * s_rate));
-
-        // Update coefficients and control values for this block (no allocations).
-        updateParameters();
-
-        // 4. Processing Chain
-        if (p_sc_audition)
+        int offset = 0;
+        while (offset < totalSamples)
         {
-            // Monitor the actual detector feed (post SC gain + HP/LP + Thrust + M/S selection),
-            // without applying compression/saturation.
-            processAuditionBlock(wet_buf);
+            const int nSamp = juce::jmin(chunkSize, totalSamples - offset);
 
-            // Preserve the oversampling latency behavior so toggling audition does not change timing.
+            // 1) Snapshot Input for Dry/Wet mix later (chunk)
+            dry_buf.setSize(2, nSamp, false, false, true);
+            wet_buf.setSize(2, nSamp, false, false, true);
+            sc_internal_buf.setSize(2, nSamp, false, false, true);
+
+            const float* inL = buffer.getReadPointer(0) + offset;
+            const float* inR = (buffer.getNumChannels() > 1) ? (buffer.getReadPointer(1) + offset) : inL;
+
+            dry_buf.copyFrom(0, 0, inL, nSamp);
+            dry_buf.copyFrom(1, 0, inR, nSamp);
+
+            wet_buf.copyFrom(0, 0, inL, nSamp);
+            wet_buf.copyFrom(1, 0, inR, nSamp);
+
+            // 2) Prepare Sidechain Buffer (chunk)
+            if (p_sc_input_mode == 1 && sidechainBuffer != nullptr && sidechainBuffer->getNumChannels() > 0)
+            {
+                const float* scL = sidechainBuffer->getReadPointer(0) + offset;
+                const float* scR = (sidechainBuffer->getNumChannels() > 1) ? (sidechainBuffer->getReadPointer(1) + offset) : scL;
+
+                sc_internal_buf.copyFrom(0, 0, scL, nSamp);
+                sc_internal_buf.copyFrom(1, 0, scR, nSamp);
+            }
+            else
+            {
+                sc_internal_buf.copyFrom(0, 0, dry_buf, 0, 0, nSamp);
+                sc_internal_buf.copyFrom(1, 0, dry_buf, 1, 0, nSamp);
+            }
+
+            smooth_alpha_block = std::exp(-(double)nSamp / (0.020 * s_rate));
+
+            // Update coefficients and control values for this chunk.
+            updateParameters();
+
+            // 3) Processing Chain (on wet_buf)
+            if (p_sc_audition)
+            {
+                // Monitor the detector feed (post SC gain + HP/LP + Thrust + M/S selection),
+                // without applying compression/saturation.
+                processAuditionBlock(wet_buf);
+
+                // Preserve oversampling latency behavior so toggling audition does not change timing.
+                if ((p_active_sat || p_active_eq) && os)
+                {
+                    auto block = juce::dsp::AudioBlock<float>(wet_buf);
+                    auto osBlock = os->processSamplesUp(block);
+                    (void)osBlock;
+                    os->processSamplesDown(block);
+                }
+            }
+            else
+            {
+                if (p_signal_flow == 1) // Sat > Comp
+                {
+                    processSaturationBlock(wet_buf);
+                    processCompressorBlock(wet_buf);
+                }
+                else // Comp > Sat
+                {
+                    processCompressorBlock(wet_buf);
+                    processSaturationBlock(wet_buf);
+                }
+            }
+
+            // 4) Latency Compensation for DRY signal
+            // If Saturation/EQ block ran, the wet signal is delayed by OS.
+            // We must delay the dry signal to match.
             if ((p_active_sat || p_active_eq) && os && os_dry)
             {
-                auto block = juce::dsp::AudioBlock<float>(wet_buf);
-                auto osBlock = os->processSamplesUp(block);
+                auto block = juce::dsp::AudioBlock<float>(dry_buf);
+                auto osBlock = os_dry->processSamplesUp(block);
                 (void)osBlock;
-                os->processSamplesDown(block);
+                os_dry->processSamplesDown(block);
             }
-        }
-        else
-        {
-            if (p_signal_flow == 1) { // Sat > Comp
-                processSaturationBlock(wet_buf);
-                processCompressorBlock(wet_buf);
+            else
+            {
+                // Sat/EQ is inactive: the WET path did not go through OS,
+                // but we still report constant latency to the host. Apply matching delay to both paths.
+                if (!p_active_sat && !p_active_eq)
+                {
+                    juce::dsp::AudioBlock<float> wetBlock(wet_buf);
+                    juce::dsp::ProcessContextReplacing<float> ctxWet(wetBlock);
+                    mainBypassDelayWet.process(ctxWet);
+
+                    juce::dsp::AudioBlock<float> dryBlock(dry_buf);
+                    juce::dsp::ProcessContextReplacing<float> ctxDry(dryBlock);
+                    mainBypassDelayDry.process(ctxDry);
+                }
             }
-            else { // Comp > Sat
-                processCompressorBlock(wet_buf);
-                processSaturationBlock(wet_buf);
-            }
-        }
 
-        // 5. Latency Compensation for DRY signal
-        // If Saturation/EQ block ran, the wet signal is delayed by OS.
-        // We must delay the dry signal to match.
-        if ((p_active_sat || p_active_eq) && os && os_dry)
-        {
-            juce::dsp::AudioBlock<float> dryBlock(dry_buf);
-            os_dry->processSamplesUp(dryBlock);
-            os_dry->processSamplesDown(dryBlock);
-        }
-        else {
-            // If modules are bypassed, the WET path did not go through OS.
-            // BUT, we promised the host constant latency.
-            // So we must delay BOTH wet and dry here to match the reported latency?
-            // Actually, if Sat is bypassed, processSaturationBlock returns early.
-            // To keep constant latency, we must delay the buffer if Sat is bypassed.
+            // 5) Final Mixer (write into the output buffer segment)
+            const double dw_target = p_sc_audition ? 1.0 : juce::jlimit(0.0, 1.0, (double)p_dry_wet / 100.0);
+            drywet_sm = smooth1p(drywet_sm, dw_target, smooth_alpha_block);
 
-            // Logic:
-            // If Sat/EQ Active -> Latency is incurred in processSaturationBlock (OS).
-            // If Sat/EQ Inactive -> We must apply delay manually to WET signal to match host report.
+            const double final_gain_target = dbToLin((double)p_out_trim);
+            out_lin_sm = smooth1p(out_lin_sm, final_gain_target, smooth_alpha_block);
+            const float finalGain = (float)out_lin_sm;
 
-            if (!p_active_sat && !p_active_eq) {
-                juce::dsp::AudioBlock<float> wetBlock(wet_buf);
-                juce::dsp::ProcessContextReplacing<float> ctx(wetBlock);
-                mainBypassDelayWet.process(ctx);
+            float* outL = buffer.getWritePointer(0) + offset;
+            float* outR = (buffer.getNumChannels() > 1) ? (buffer.getWritePointer(1) + offset) : nullptr;
 
-                // Dry also needs identical delay to phase align with Wet
-                juce::dsp::AudioBlock<float> dryBlock(dry_buf);
-                juce::dsp::ProcessContextReplacing<float> ctxDry(dryBlock);
-                mainBypassDelayDry.process(ctxDry);
-            }
-        }
-
-        // 6. Final Mixer
-        const double dw_target = p_sc_audition ? 1.0 : juce::jlimit(0.0, 1.0, (double)p_dry_wet / 100.0);
-        drywet_sm = smooth1p(drywet_sm, dw_target, smooth_alpha_block);
-
-        double total_out_db = (double)p_out_trim;
-        double final_gain_target = dbToLin(total_out_db);
-        out_lin_sm = smooth1p(out_lin_sm, final_gain_target, smooth_alpha_block);
-        const float finalGain = (float)out_lin_sm;
-
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-        {
-            float* out = buffer.getWritePointer(ch);
-            const float* wet = wet_buf.getReadPointer(ch);
-            const float* dry = dry_buf.getReadPointer(ch);
-            const float wm = (float)drywet_sm;
-            const float dm = 1.0f - wm;
+            const float* wetL = wet_buf.getReadPointer(0);
+            const float* wetR = wet_buf.getReadPointer(1);
+            const float* dryL = dry_buf.getReadPointer(0);
+            const float* dryR = dry_buf.getReadPointer(1);
 
             for (int i = 0; i < nSamp; ++i)
-                out[i] = (wet[i] * wm + dry[i] * dm) * finalGain;
+            {
+                // Fade in the "wet contribution" after topology changes to avoid clicks.
+                if (topologyRamp < 1.0)
+                    topologyRamp = std::min(1.0, topologyRamp + topologyInc);
+
+                const float wm = (float)(drywet_sm * topologyRamp);
+                const float dm = 1.0f - wm;
+
+                outL[i] = (wetL[i] * wm + dryL[i] * dm) * finalGain;
+                if (outR)
+                    outR[i] = (wetR[i] * wm + dryR[i] * dm) * finalGain;
+            }
+
+            offset += nSamp;
         }
     }
 
@@ -399,20 +485,11 @@ public:
         sc_hp_l_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
         sc_hp_r_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
 
-        sc_lp_l.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sc_lp_r.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sc_lp_l_2.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sc_lp_r_2.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
-
-        sat_sc_hp_l.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
-        sat_sc_hp_r.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
-        sat_sc_hp_l_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
-        sat_sc_hp_r_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
-
-        sat_sc_lp_l.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sat_sc_lp_r.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sat_sc_lp_l_2.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sat_sc_lp_r_2.update_lpf(std::max(100.0, (double)p_sc_lp_freq), 0.707, s_rate);
+        // UPDATED: Allow down to 40Hz
+        sc_lp_l.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
+        sc_lp_r.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
+        sc_lp_l_2.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
+        sc_lp_r_2.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
 
         thrust_gain_db = 0.0;
         if (p_thrust_mode == 1) thrust_gain_db = 3.0;
@@ -444,6 +521,23 @@ public:
 
         sat_tone_l.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
         sat_tone_r.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
+
+        // Pultec-style low-end trick approximation: resonant bump at selected LF + broad dip above
+        {
+            const int idx = juce::jlimit(0, 3, p_girth_freq_sel);
+            static const double freqs[4] = { 20.0, 30.0, 60.0, 100.0 };
+            static const double dips[4] = { 120.0, 160.0, 250.0, 350.0 };
+            const double f0 = freqs[idx];
+            const double fd = dips[idx];
+            const double bumpQ = 0.80;
+            const double dipQ = 0.70;
+            const double bumpDb = (double)p_girth;
+            const double dipDb = -(double)p_girth * 0.70;
+            girth_bump_l.update_peak(f0, bumpDb, bumpQ, s_rate);
+            girth_bump_r.update_peak(f0, bumpDb, bumpQ, s_rate);
+            girth_dip_l.update_peak(fd, dipDb, dipQ, s_rate);
+            girth_dip_r.update_peak(fd, dipDb, dipQ, s_rate);
+        }
 
         const double hb = (double)p_harm_bright;
         harm_pre_l.update_shelf((double)p_harm_freq, -hb, 0.707, os_srate);
@@ -920,7 +1014,8 @@ private:
 
         // 1. Snapshot DRY (Source for AutoGain)
         sat_clean_buf.setSize(nCh, nS, false, false, true);
-        sat_clean_buf.makeCopyOf(io);
+        for (int ch = 0; ch < nCh; ++ch)
+            sat_clean_buf.copyFrom(ch, 0, io, ch, 0, nS);
 
         // Align Dry buffer with Oversampling latency
         if (p_active_sat) {
@@ -932,7 +1027,8 @@ private:
         }
 
         sat_proc_buf.setSize(nCh, nS, false, false, true);
-        sat_proc_buf.makeCopyOf(io);
+        for (int ch = 0; ch < nCh; ++ch)
+            sat_proc_buf.copyFrom(ch, 0, io, ch, 0, nS);
 
         sat_pre_lin_sm = smooth1p(sat_pre_lin_sm, sat_pre_lin_target, smooth_alpha_block);
         sat_drive_lin_sm = smooth1p(sat_drive_lin_sm, sat_drive_lin_target, smooth_alpha_block);
@@ -945,24 +1041,7 @@ private:
             }
         }
 
-        // SC Filters for Sat
-        if (p_sc_to_sat && p_active_sat) {
-            // ... (Filter code remains unchanged)
-            for (int ch = 0; ch < nCh; ++ch) {
-                float* x = sat_proc_buf.getWritePointer(ch);
-                auto& hp1 = (ch == 0) ? sat_sc_hp_l : sat_sc_hp_r;
-                auto& hp2 = (ch == 0) ? sat_sc_hp_l_2 : sat_sc_hp_r_2;
-                auto& lp1 = (ch == 0) ? sat_sc_lp_l : sat_sc_lp_r;
-                auto& lp2 = (ch == 0) ? sat_sc_lp_l_2 : sat_sc_lp_r_2;
-
-                for (int i = 0; i < nS; ++i) {
-                    double s = (double)x[i];
-                    s = hp2.process(hp1.process(s));
-                    s = lp2.process(lp1.process(s));
-                    x[i] = (float)s;
-                }
-            }
-        }
+        // REMOVED: SC Filters for Sat (p_sc_to_sat functionality)
 
         // --- OVERSAMPLED PROCESSING ---
         auto block = juce::dsp::AudioBlock<float>(sat_proc_buf);
@@ -972,6 +1051,7 @@ private:
         const int osN = (int)osBlock.getNumSamples();
         const bool eq_tone_active = p_active_eq && (std::abs(p_sat_tone) > 0.01f);
         const bool eq_bright_active = p_active_eq && (std::abs(p_harm_bright) > 0.01f);
+        const bool eq_girth_active = p_active_eq && (std::abs(p_girth) > 0.01f);
 
         for (int ch = 0; ch < nCh; ++ch)
         {
@@ -1025,49 +1105,9 @@ private:
             }
         }
 
-        // --- FIXED AUTOGAIN ---
-        if (p_active_sat && p_sat_autogain_mode != 0)
-        {
-            // Measure Clean (Delayed)
-            double inPow = 0.0;
-            for (int ch = 0; ch < nCh; ++ch) {
-                const float* x = sat_clean_buf.getReadPointer(ch);
-                for (int i = 0; i < nS; ++i) inPow += (double)x[i] * (double)x[i];
-            }
-
-            // Measure Wet (Saturated + Mirror Applied)
-            double outPow = 0.0;
-            for (int ch = 0; ch < nCh; ++ch) {
-                const float* y = sat_proc_buf.getReadPointer(ch);
-                for (int i = 0; i < nS; ++i) outPow += (double)y[i] * (double)y[i];
-            }
-
-            if (inPow > 1e-20 && outPow > 1e-20) {
-                double g = std::sqrt(inPow / outPow);
-                g = juce::jlimit(0.125, 8.0, g); // +/- 18dB limit
-                const double exponent = (p_sat_autogain_mode == 1) ? 0.5 : 1.0;
-                const double gTarget = std::pow(g, exponent);
-
-                // Slower smoothing (300ms) to prevent pumping
-                const double alpha = std::exp(-(double)nS / (0.300 * s_rate));
-                sat_agc_gain_sm = sat_agc_gain_sm * alpha + gTarget * (1.0 - alpha);
-
-                const float gSm = (float)sat_agc_gain_sm;
-                for (int ch = 0; ch < nCh; ++ch) {
-                    float* y = sat_proc_buf.getWritePointer(ch);
-                    for (int i = 0; i < nS; ++i) y[i] *= gSm;
-                }
-            }
-        }
-        else {
-            // Release AGC if disabled
-            const double alpha = std::exp(-(double)nS / (0.300 * s_rate));
-            sat_agc_gain_sm = sat_agc_gain_sm * alpha + 1.0 * (1.0 - alpha);
-        }
-
-        // --- POST-PROCESSING (Trim, EQ) ---
-        sat_trim_lin_sm = smooth1p(sat_trim_lin_sm, sat_trim_lin, smooth_alpha_block);
-        const double trim = (double)sat_trim_lin_sm;
+        // --- POST-PROCESSING (Voicing + Color EQ; pre-trim) ---
+        const bool sat_agc_active = (p_active_sat && (p_sat_autogain_mode != 0));
+        double outPow_post = 0.0;
 
         for (int ch = 0; ch < nCh; ++ch)
         {
@@ -1076,22 +1116,72 @@ private:
             auto& stLo = (ch == 0) ? steel_low_l : steel_low_r;
             auto& stHi = (ch == 0) ? steel_high_l : steel_high_r;
             auto& tone = (ch == 0) ? sat_tone_l : sat_tone_r;
+            auto& gBump = (ch == 0) ? girth_bump_l : girth_bump_r;
+            auto& gDip = (ch == 0) ? girth_dip_l : girth_dip_r;
 
             for (int i = 0; i < nS; ++i)
             {
                 double s = (double)y[i];
 
+                // Transformer voicing
                 if (p_active_sat && (mode == 1 || mode == 2)) {
                     if (mode == 1) s = ironV.process(s);
                     else { s = stLo.process(s); s = stHi.process(s); }
                 }
 
-                if (p_active_sat) s *= trim;
+                // Color EQ
+                if (eq_girth_active) { s = gBump.process(s); s = gDip.process(s); }
+                if (eq_tone_active)  s = tone.process(s);
 
-                // Mirror was already applied before Autogain!
-
-                if (eq_tone_active) s = tone.process(s);
                 y[i] = (float)s;
+
+                if (sat_agc_active) outPow_post += s * s;
+            }
+        }
+
+        // --- SATURATION AUTO-GAIN (Measured post-voicing/EQ, pre-trim) ---
+        {
+            const double alpha = std::exp(-(double)nS / (0.300 * s_rate)); // ~300ms
+
+            if (sat_agc_active)
+            {
+                // Measure Clean (Delayed)
+                double inPow = 0.0;
+                for (int ch = 0; ch < nCh; ++ch) {
+                    const float* x = sat_clean_buf.getReadPointer(ch);
+                    for (int i = 0; i < nS; ++i) inPow += (double)x[i] * (double)x[i];
+                }
+
+                if (inPow > 1e-20 && outPow_post > 1e-20) {
+                    double g = std::sqrt(inPow / outPow_post);
+                    g = juce::jlimit(0.125, 8.0, g); // +/- 18dB limit
+                    const double exponent = (p_sat_autogain_mode == 1) ? 0.5 : 1.0;
+                    const double gTarget = std::pow(g, exponent);
+                    sat_agc_gain_sm = sat_agc_gain_sm * alpha + gTarget * (1.0 - alpha);
+
+                    const float gSm = (float)sat_agc_gain_sm;
+                    for (int ch = 0; ch < nCh; ++ch) {
+                        float* y = sat_proc_buf.getWritePointer(ch);
+                        for (int i = 0; i < nS; ++i) y[i] *= gSm;
+                    }
+                }
+            }
+            else
+            {
+                // Release AGC if disabled
+                sat_agc_gain_sm = sat_agc_gain_sm * alpha + 1.0 * (1.0 - alpha);
+            }
+        }
+
+        // --- SAT TRIM (applied after AGC so Trim remains a real output control) ---
+        sat_trim_lin_sm = smooth1p(sat_trim_lin_sm, sat_trim_lin, smooth_alpha_block);
+        const double trim = (double)sat_trim_lin_sm;
+
+        if (p_active_sat)
+        {
+            for (int ch = 0; ch < nCh; ++ch) {
+                float* y = sat_proc_buf.getWritePointer(ch);
+                for (int i = 0; i < nS; ++i) y[i] *= (float)trim;
             }
         }
 
@@ -1133,11 +1223,12 @@ private:
     // Filters (Comp)
     SimpleBiquad sc_hp_l, sc_hp_r, sc_hp_l_2, sc_hp_r_2;
     SimpleBiquad sc_lp_l, sc_lp_r, sc_lp_l_2, sc_lp_r_2;
-    // Filters (Sat)
-    SimpleBiquad sat_sc_hp_l, sat_sc_hp_r, sat_sc_hp_l_2, sat_sc_hp_r_2;
-    SimpleBiquad sat_sc_lp_l, sat_sc_lp_r, sat_sc_lp_l_2, sat_sc_lp_r_2;
+    // REMOVED: Filters (Sat)
+
     SimpleBiquad sc_shelf_l, sc_shelf_r;
-    SimpleBiquad sat_tone_l, sat_tone_r, harm_pre_l, harm_pre_r, harm_post_l, harm_post_r;
+    SimpleBiquad sat_tone_l, sat_tone_r;
+    SimpleBiquad girth_bump_l, girth_bump_r, girth_dip_l, girth_dip_r;
+    SimpleBiquad harm_pre_l, harm_pre_r, harm_post_l, harm_post_r;
     SimpleBiquad iron_voicing_l, iron_voicing_r, steel_low_l, steel_low_r, steel_high_l, steel_high_r;
 
     double fb_prev_l = 0.0, fb_prev_r = 0.0;
@@ -1200,6 +1291,18 @@ private:
 
     int last_sat_mode = -1;
     int last_ctrl_mode = -1;
+
+
+    // Topology-change click smoothing (fade the "wet contribution" back in over a short ramp)
+    double topologyRamp = 1.0;
+    double topologyInc = 0.0;
+
+    bool prevTopoSatEq = false;
+    int  prevTopoFlow = 0;
+    bool prevTopoAudition = false;
+    int  prevTopoMsMode = 0;
+    int  prevTopoScMode = 0;
+    bool prevTopoScToComp = false;
 
     juce::AudioBuffer<float> dry_buf, wet_buf, sc_internal_buf;
     juce::AudioBuffer<float> sat_clean_buf, sat_proc_buf;
