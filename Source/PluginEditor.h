@@ -53,6 +53,7 @@ private:
     std::unique_ptr<Knob> kThresh, kRatio, kKnee, kAttack, kRelease, kMakeup, kMix;
     std::unique_ptr<Knob> kCompInput;
     std::unique_ptr<Knob> kScHpf, kScLpf, kDetRms, kStereoLink, kMsBalance, kFbBlend, kScLevel;
+    std::unique_ptr<Knob> kScTdAmt, kScTdMs;
     std::unique_ptr<Knob> kCrestTarget, kCrestSpeed;
     std::unique_ptr<Knob> kTpAmt, kTpRaise, kFluxAmt;
 
@@ -89,6 +90,7 @@ private:
     std::unique_ptr<SliderAttachment> aThresh, aRatio, aKnee, aAttack, aRelease, aMakeup, aMix;
     std::unique_ptr<SliderAttachment> aCompInput;
     std::unique_ptr<SliderAttachment> aScHpf, aScLpf, aDetRms, aStereoLink, aMsBalance, aFbBlend, aScLevel;
+    std::unique_ptr<SliderAttachment> aScTdAmt, aScTdMs;
     std::unique_ptr<SliderAttachment> aCrestTarget, aCrestSpeed;
     std::unique_ptr<SliderAttachment> aTpAmt, aTpRaise, aFluxAmt;
     std::unique_ptr<SliderAttachment> aSatPre, aSatDrive, aSatTrim, aSatMix;

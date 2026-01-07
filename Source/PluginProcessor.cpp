@@ -124,6 +124,9 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     dsp.p_sc_level_db = *apvts.getRawParameterValue("sc_level_db");
     dsp.p_sc_audition = (*apvts.getRawParameterValue("sc_audition") > 0.5f);
 
+    dsp.p_sc_td_amt = *apvts.getRawParameterValue("sc_td_amt");
+    dsp.p_sc_td_ms  = *apvts.getRawParameterValue("sc_td_ms");
+
     // Transient/Flux
     dsp.p_tp_mode = (int)*apvts.getRawParameterValue("tp_mode");
     dsp.p_tp_amount = *apvts.getRawParameterValue("tp_amount");
@@ -256,6 +259,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout UltimateCompAudioProcessor::
     layout.add(std::make_unique<juce::AudioParameterFloat>("fb_blend", "Feedback Blend %", 0.0f, 100.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("sc_level_db", "SC Level (dB)", -24.0f, 24.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterBool>("sc_audition", "SC Audition", false));
+
+
+layout.add(std::make_unique<juce::AudioParameterFloat>("sc_td_amt", "SC TD Amount",
+    juce::NormalisableRange<float>(-100.0f, 100.0f, 0.1f), 0.0f));
+layout.add(std::make_unique<juce::AudioParameterFloat>("sc_td_ms", "SC TD M/S",
+    juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f));
 
     layout.add(std::make_unique<juce::AudioParameterChoice>("tp_mode", "Transient Priority", juce::StringArray{ "Off", "On" }, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>("tp_amount", "TP Amount %", 0.0f, 100.0f, 50.0f));

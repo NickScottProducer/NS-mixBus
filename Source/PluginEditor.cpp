@@ -345,6 +345,19 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kFbBlend = makeKnob("FB Blend", *lnf); kFbBlend->setUnitSuffix("%");
     kScLevel = makeKnob("SC Level", *lnf); kScLevel->setUnitSuffix("dB");
 
+
+kScTdAmt = makeKnob("TD Amt", *lnf); kScTdAmt->setUnitSuffix("%");
+kScTdMs = makeKnob("TD M/S", *lnf);
+kScTdMs->setTextFromValue([](double v)
+{
+    v = juce::jlimit(0.0, 100.0, v);
+    if (v < 0.5)  return juce::String("Mid");
+    if (v > 99.5) return juce::String("Side");
+    const int s = (int)std::round(v);
+    const int m = 100 - s;
+    return juce::String("M") + juce::String(m) + juce::String("/S") + juce::String(s);
+});
+
     kCrestTarget = makeKnob("Crest Target", *lnf); kCrestTarget->setUnitSuffix("dB");
     kCrestSpeed = makeKnob("Crest Speed", *lnf); kCrestSpeed->setUnitSuffix("ms");
     kTpAmt = makeKnob("Focus", *lnf); kTpAmt->setUnitSuffix("%");
@@ -449,7 +462,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     panelDyn->addAndMakeVisible(*kMix); panelDyn->addAndMakeVisible(cAutoRel);
 
     panelDet->addAndMakeVisible(*kScHpf); panelDet->addAndMakeVisible(*kScLpf); panelDet->addAndMakeVisible(*kDetRms);
-    panelDet->addAndMakeVisible(*kStereoLink); panelDet->addAndMakeVisible(*kMsBalance); panelDet->addAndMakeVisible(*kFbBlend); panelDet->addAndMakeVisible(*kScLevel);
+    panelDet->addAndMakeVisible(*kStereoLink); panelDet->addAndMakeVisible(*kMsBalance); panelDet->addAndMakeVisible(*kFbBlend); panelDet->addAndMakeVisible(*kScLevel); panelDet->addAndMakeVisible(*kScTdAmt); panelDet->addAndMakeVisible(*kScTdMs);
     panelDet->addAndMakeVisible(cThrust); panelDet->addAndMakeVisible(cScMode); panelDet->addAndMakeVisible(cMsMode); panelDet->addAndMakeVisible(bScToComp);
 
     panelCrest->addAndMakeVisible(*kCrestTarget); panelCrest->addAndMakeVisible(*kCrestSpeed); panelCrest->addAndMakeVisible(cCtrlMode);
@@ -484,6 +497,10 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     bindKnob(*kMsBalance, aMsBalance, "ms_balance", "dB", "M/S Balance offset for Cross-comp modes");
     bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%", "Blend between Feed-Forward and Feed-Back");
     bindKnob(*kScLevel, aScLevel, "sc_level_db", "dB", "Trim the Sidechain signal level");
+
+bindKnob(*kScTdAmt, aScTdAmt, "sc_td_amt", "%", "Sidechain transient emphasis (detector feed): + boosts attack / - boosts sustain.");
+bindKnob(*kScTdMs,  aScTdMs,  "sc_td_ms",  "",  "Transient focus: 0 = Mid, 100 = Side (M/S domain).");
+
     bindKnob(*kCrestTarget, aCrestTarget, "crest_target", "dB", "Target Crest Factor (Peak vs RMS difference)");
     bindKnob(*kCrestSpeed, aCrestSpeed, "crest_speed", "ms", "Reaction speed of Crest controller");
     bindKnob(*kTpAmt, aTpAmt, "tp_amount", "%", "Amount of transient preservation");
@@ -857,14 +874,16 @@ void UltimateCompAudioProcessorEditor::resized()
         botLeft.removeFromLeft(gap);
         cMsMode.setBounds(botLeft.removeFromLeft(smallComboW).withSizeKeepingCentre(smallComboW, comboH));
 
-        const int w = c.getWidth() / 7;
+        const int w = c.getWidth() / 9;
         placeKnob(kScHpf.get(), c.removeFromLeft(w));
         placeKnob(kScLpf.get(), c.removeFromLeft(w));
         placeKnob(kDetRms.get(), c.removeFromLeft(w));
         placeKnob(kStereoLink.get(), c.removeFromLeft(w));
         placeKnob(kMsBalance.get(), c.removeFromLeft(w));
         placeKnob(kFbBlend.get(), c.removeFromLeft(w));
-        placeKnob(kScLevel.get(), c);
+        placeKnob(kScLevel.get(), c.removeFromLeft(w));
+        placeKnob(kScTdAmt.get(), c.removeFromLeft(w));
+        placeKnob(kScTdMs.get(), c);
     }
 
     {
