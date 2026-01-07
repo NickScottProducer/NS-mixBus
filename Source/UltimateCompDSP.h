@@ -80,7 +80,7 @@ public:
 
     // --- SIDECHAIN TRANSIENT DESIGNER (Detector Conditioning) ---
     float p_sc_td_amt = 0.0f;   // -100..100 (transient emphasis)
-    float p_sc_td_ms  = 0.0f;   // 0..100 (0=Mid focus, 100=Side focus)
+    float p_sc_td_ms = 0.0f;   // 0..100 (0=Mid focus, 100=Side focus)
 
     // --- TRANSIENT PRIORITY ---
     int   p_tp_mode = 0;
@@ -109,6 +109,11 @@ public:
     // --- COLOR EQ (Pultec-style low-end) ---
     float p_girth = 0.0f;        // dB
     int   p_girth_freq_sel = 2;  // 0=20,1=30,2=60,3=100
+
+    // --- DEBUG TUNING KNOBS (Temporary) ---
+    float p_debug_boost_q = 0.5f;
+    float p_debug_dip_q = 0.5f;
+    float p_debug_ratio = 0.35f;
 
     // --- OUTPUT ---
     float p_makeup = 0.0f;
@@ -224,10 +229,10 @@ public:
         ms_bal_sm = 1.0;
 
 
-sc_td_amt_sm = 0.0;
-sc_td_ms_sm  = 0.0;
-sc_td_fast_mid = sc_td_slow_mid = 0.0;
-sc_td_fast_side = sc_td_slow_side = 0.0;
+        sc_td_amt_sm = 0.0;
+        sc_td_ms_sm = 0.0;
+        sc_td_fast_mid = sc_td_slow_mid = 0.0;
+        sc_td_fast_side = sc_td_slow_side = 0.0;
 
         fb_prev_l = fb_prev_r = 0.0;
         det_env = 0.0;
@@ -495,7 +500,6 @@ sc_td_fast_side = sc_td_slow_side = 0.0;
         sc_hp_l_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
         sc_hp_r_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
 
-        // UPDATED: Allow down to 40Hz
         sc_lp_l.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
         sc_lp_r.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
         sc_lp_l_2.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
@@ -525,15 +529,14 @@ sc_td_fast_side = sc_td_slow_side = 0.0;
         sc_level_target = dbToLin((double)p_sc_level_db);
         ms_bal_target = dbToLin((double)p_ms_balance_db);
 
-
-
-        // Sidechain transient designer coefficients (fixed times; shapes detector feed)
+        // Sidechain transient designer
         sc_td_amt_target = juce::jlimit(-1.0, 1.0, (double)p_sc_td_amt / 100.0);
-        sc_td_ms_target  = juce::jlimit(0.0, 1.0, (double)p_sc_td_ms / 100.0);
+        sc_td_ms_target = juce::jlimit(0.0, 1.0, (double)p_sc_td_ms / 100.0);
         sc_td_fast_att = std::exp(-1000.0 / (1.0 * s_rate));
         sc_td_fast_rel = std::exp(-1000.0 / (30.0 * s_rate));
         sc_td_slow_att = std::exp(-1000.0 / (25.0 * s_rate));
         sc_td_slow_rel = std::exp(-1000.0 / (250.0 * s_rate));
+
         smooth_alpha = std::exp(-1.0 / (0.020 * s_rate));
         os_srate = s_rate * (double)os_factor;
         smooth_alpha_os = std::exp(-1.0 / (0.020 * os_srate));
@@ -541,19 +544,22 @@ sc_td_fast_side = sc_td_slow_side = 0.0;
         sat_tone_l.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
         sat_tone_r.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
 
-        // Pultec-style low-end trick approximation: resonant bump at selected LF + broad dip above
+        // --- PULTEC-STYLE LOW-END TRICK (TUNED) ---
         {
             const int idx = juce::jlimit(0, 3, p_girth_freq_sel);
             static const double freqs[4] = { 20.0, 30.0, 60.0, 100.0 };
-            static const double dips[4] = { 120.0, 160.0, 250.0, 350.0 };
+            static const double dips[4] = { 65.0, 97.5, 195.0, 325.0 };
+
             const double f0 = freqs[idx];
             const double fd = dips[idx];
-            const double bumpQ = 0.80;
-            const double dipQ = 0.70;
+
+            const double bumpQ = 1.0;
+            const double dipQ  = 0.6;
+
             const double bumpDb = (double)p_girth;
-            const double dipDb = -(double)p_girth * 0.70;
-            girth_bump_l.update_peak(f0, bumpDb, bumpQ, s_rate);
-            girth_bump_r.update_peak(f0, bumpDb, bumpQ, s_rate);
+            const double dipDb  = -(double)p_girth * 0.80;
+            girth_bump_l.update_low_shelf(f0 * 4.0, bumpDb, bumpQ, s_rate);
+            girth_bump_r.update_low_shelf(f0 * 4.0, bumpDb, bumpQ, s_rate);
             girth_dip_l.update_peak(fd, dipDb, dipQ, s_rate);
             girth_dip_r.update_peak(fd, dipDb, dipQ, s_rate);
         }
@@ -601,47 +607,47 @@ private:
     static inline double linToDb(double lin) { return 20.0 * std::log10(std::max(lin, 1.0e-20)); }
     static inline double smooth1p(double current, double target, double alpha) { return current + (target - current) * (1.0 - alpha); }
 
-inline double scTdProcessSample(double x, double& fastEnv, double& slowEnv, double amt) noexcept
-{
-    const double ax = std::abs(x);
+    inline double scTdProcessSample(double x, double& fastEnv, double& slowEnv, double amt) noexcept
+    {
+        const double ax = std::abs(x);
 
-    const double cFast = (ax > fastEnv) ? sc_td_fast_att : sc_td_fast_rel;
-    fastEnv = fastEnv * cFast + ax * (1.0 - cFast);
+        const double cFast = (ax > fastEnv) ? sc_td_fast_att : sc_td_fast_rel;
+        fastEnv = fastEnv * cFast + ax * (1.0 - cFast);
 
-    const double cSlow = (ax > slowEnv) ? sc_td_slow_att : sc_td_slow_rel;
-    slowEnv = slowEnv * cSlow + ax * (1.0 - cSlow);
+        const double cSlow = (ax > slowEnv) ? sc_td_slow_att : sc_td_slow_rel;
+        slowEnv = slowEnv * cSlow + ax * (1.0 - cSlow);
 
-    const double eps = 1.0e-12;
-    double ratio = (fastEnv + eps) / (slowEnv + eps);
-    ratio = juce::jlimit(0.25, 4.0, ratio);
+        const double eps = 1.0e-12;
+        double ratio = (fastEnv + eps) / (slowEnv + eps);
+        ratio = juce::jlimit(0.25, 4.0, ratio);
 
-    // amt is -1..1, depth scales aggression (detector-only, so we can be reasonably assertive)
-    const double depth = 2.0;
-    double g = std::exp(std::log(ratio) * (amt * depth));
-    g = juce::jlimit(0.25, 4.0, g);
+        // amt is -1..1, depth scales aggression (detector-only, so we can be reasonably assertive)
+        const double depth = 2.0;
+        double g = std::exp(std::log(ratio) * (amt * depth));
+        g = juce::jlimit(0.25, 4.0, g);
 
-    return x * g;
-}
+        return x * g;
+    }
 
-inline void applySidechainTransientDesigner(double& s_l, double& s_r) noexcept
-{
-    const double amt = juce::jlimit(-1.0, 1.0, sc_td_amt_sm);
-    if (std::abs(amt) < 1.0e-9)
-        return;
+    inline void applySidechainTransientDesigner(double& s_l, double& s_r) noexcept
+    {
+        const double amt = juce::jlimit(-1.0, 1.0, sc_td_amt_sm);
+        if (std::abs(amt) < 1.0e-9)
+            return;
 
-    const double blend = juce::jlimit(0.0, 1.0, sc_td_ms_sm);
-    const double amtMid  = amt * (1.0 - blend);
-    const double amtSide = amt * blend;
+        const double blend = juce::jlimit(0.0, 1.0, sc_td_ms_sm);
+        const double amtMid = amt * (1.0 - blend);
+        const double amtSide = amt * blend;
 
-    const double mid  = (s_l + s_r) * 0.5;
-    const double side = (s_l - s_r) * 0.5;
+        const double mid = (s_l + s_r) * 0.5;
+        const double side = (s_l - s_r) * 0.5;
 
-    const double midP  = scTdProcessSample(mid,  sc_td_fast_mid,  sc_td_slow_mid,  amtMid);
-    const double sideP = scTdProcessSample(side, sc_td_fast_side, sc_td_slow_side, amtSide);
+        const double midP = scTdProcessSample(mid, sc_td_fast_mid, sc_td_slow_mid, amtMid);
+        const double sideP = scTdProcessSample(side, sc_td_fast_side, sc_td_slow_side, amtSide);
 
-    s_l = midP + sideP;
-    s_r = midP - sideP;
-}
+        s_l = midP + sideP;
+        s_r = midP - sideP;
+    }
 
     void processCompressorBlock(juce::AudioBuffer<float>& io)
     {
@@ -669,12 +675,10 @@ inline void applySidechainTransientDesigner(double& s_l, double& s_r) noexcept
             makeup_lin_sm = smooth1p(makeup_lin_sm, makeup_lin_target, smooth_alpha);
             sc_level_sm = smooth1p(sc_level_sm, sc_level_target, smooth_alpha);
             sc_td_amt_sm = smooth1p(sc_td_amt_sm, sc_td_amt_target, smooth_alpha);
-            sc_td_ms_sm  = smooth1p(sc_td_ms_sm,  sc_td_ms_target,  smooth_alpha);
-            ms_bal_sm = smooth1p(ms_bal_sm, ms_bal_target, smooth_alpha);
-
-
+            sc_td_ms_sm = smooth1p(sc_td_ms_sm, sc_td_ms_target, smooth_alpha);
             sc_td_amt_sm = smooth1p(sc_td_amt_sm, sc_td_amt_target, smooth_alpha);
-            sc_td_ms_sm  = smooth1p(sc_td_ms_sm,  sc_td_ms_target,  smooth_alpha);
+            sc_td_ms_sm = smooth1p(sc_td_ms_sm, sc_td_ms_target, smooth_alpha);
+            ms_bal_sm = smooth1p(ms_bal_sm, ms_bal_target, smooth_alpha);
             // 1. Apply Input Gain (Drive)
             double in_gain = comp_in_sm;
             l[i] *= (float)in_gain;
@@ -827,6 +831,11 @@ inline void applySidechainTransientDesigner(double& s_l, double& s_r) noexcept
             comp_in_sm = smooth1p(comp_in_sm, comp_in_target, smooth_alpha);
             sc_level_sm = smooth1p(sc_level_sm, sc_level_target, smooth_alpha);
 
+            // --- ADD THESE TWO LINES ---
+            sc_td_amt_sm = smooth1p(sc_td_amt_sm, sc_td_amt_target, smooth_alpha);
+            sc_td_ms_sm = smooth1p(sc_td_ms_sm, sc_td_ms_target, smooth_alpha);
+            // ---------------------------
+
             // Pull sidechain source (internal/external)
             double s_l = (double)sc_internal_buf.getSample(0, i);
             double s_r = (double)((sc_internal_buf.getNumChannels() > 1) ? sc_internal_buf.getSample(1, i) : sc_internal_buf.getSample(0, i));
@@ -853,10 +862,10 @@ inline void applySidechainTransientDesigner(double& s_l, double& s_r) noexcept
                 if (p_active_det)
                 {
                     // HPF/LPF - FIXED: Changed scHP_L to sc_hp_l etc to match class members
-                    s_l = sc_hp_l.process(s_l);
-                    s_r = sc_hp_r.process(s_r);
-                    s_l = sc_lp_l.process(s_l);
-                    s_r = sc_lp_r.process(s_r);
+                    s_l = sc_hp_l_2.process(sc_hp_l.process(s_l));
+                    s_r = sc_hp_r_2.process(sc_hp_r.process(s_r));
+                    s_l = sc_lp_l_2.process(sc_lp_l.process(s_l));
+                    s_r = sc_lp_r_2.process(sc_lp_r.process(s_r));
 
                     // Thrust voicing
                     if (p_thrust_mode != 0) {
@@ -865,8 +874,8 @@ inline void applySidechainTransientDesigner(double& s_l, double& s_r) noexcept
                     }
                 }
 
-            // Sidechain transient designer (post filters)
-            applySidechainTransientDesigner(s_l, s_r);
+                // Sidechain transient designer (post filters)
+                applySidechainTransientDesigner(s_l, s_r);
 
             }
 
@@ -1353,15 +1362,15 @@ inline void applySidechainTransientDesigner(double& s_l, double& s_r) noexcept
     double ms_bal_target = 1.0, ms_bal_sm = 1.0;
 
 
-// Sidechain transient designer (detector conditioning)
-double sc_td_amt_target = 0.0, sc_td_amt_sm = 0.0;
-double sc_td_ms_target  = 0.0, sc_td_ms_sm  = 0.0;
+    // Sidechain transient designer (detector conditioning)
+    double sc_td_amt_target = 0.0, sc_td_amt_sm = 0.0;
+    double sc_td_ms_target = 0.0, sc_td_ms_sm = 0.0;
 
-double sc_td_fast_att = 0.999, sc_td_fast_rel = 0.999;
-double sc_td_slow_att = 0.999, sc_td_slow_rel = 0.999;
+    double sc_td_fast_att = 0.999, sc_td_fast_rel = 0.999;
+    double sc_td_slow_att = 0.999, sc_td_slow_rel = 0.999;
 
-double sc_td_fast_mid = 0.0,  sc_td_slow_mid  = 0.0;
-double sc_td_fast_side = 0.0, sc_td_slow_side = 0.0;
+    double sc_td_fast_mid = 0.0, sc_td_slow_mid = 0.0;
+    double sc_td_fast_side = 0.0, sc_td_slow_side = 0.0;
 
     double out_lin_target = 1.0, out_lin_sm = 1.0;
     double sat_pre_lin_target = 1.0, sat_pre_lin_sm = 1.0;

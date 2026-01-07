@@ -23,6 +23,8 @@ UltimateCompAudioProcessor::UltimateCompAudioProcessor()
 #endif
     , apvts(*this, nullptr, "PARAMS", createParameterLayout())
 {
+    // Initialize PresetManager
+    presetManager = std::make_unique<PresetManager>(apvts);
 }
 
 UltimateCompAudioProcessor::~UltimateCompAudioProcessor() {}
@@ -44,7 +46,7 @@ void UltimateCompAudioProcessor::changeProgramName(int, const juce::String&) {}
 void UltimateCompAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     dsp.prepare(sampleRate, samplesPerBlock);
-    // FIXED: Set latency once here. It will be constant thanks to UltimateCompDSP logic.
+    // Set latency once here. It will be constant thanks to UltimateCompDSP logic.
     setLatencySamples((int)std::lround(dsp.getLatency()));
 }
 
@@ -71,7 +73,7 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     const bool hasSidechainBus = (getBusCount(true) > 1) && (getBus(true, 1) != nullptr) && getBus(true, 1)->isEnabled();
 
     // --- UPDATE PARAMETERS ---
-        // Compressor
+    // Compressor
     dsp.p_thresh = *apvts.getRawParameterValue("thresh");
     dsp.p_ratio = *apvts.getRawParameterValue("ratio");
     dsp.p_knee = *apvts.getRawParameterValue("knee");
@@ -79,7 +81,7 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     dsp.p_rel_ms = *apvts.getRawParameterValue("rel_ms");
     dsp.p_makeup = *apvts.getRawParameterValue("makeup");
 
-    // NEW: Compressor Auto-Gain
+    // Compressor Auto-Gain
     dsp.p_comp_autogain_mode = (int)*apvts.getRawParameterValue("comp_autogain");
 
     // Comp Input / Mirror
@@ -105,11 +107,10 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     // Sidechain
     dsp.p_sc_input_mode = (int)*apvts.getRawParameterValue("sc_mode");
     dsp.p_ms_mode = (int)*apvts.getRawParameterValue("ms_mode");
-    dsp.p_ms_balance_db = *apvts.getRawParameterValue("ms_balance"); // NEW
+    dsp.p_ms_balance_db = *apvts.getRawParameterValue("ms_balance");
 
     // SC Routing
     dsp.p_sc_to_comp = (*apvts.getRawParameterValue("sc_to_comp") > 0.5f);
-    // REMOVED: p_sc_to_sat assignment
 
     // Detector
     dsp.p_ctrl_mode = (int)*apvts.getRawParameterValue("ctrl_mode");
@@ -125,7 +126,7 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     dsp.p_sc_audition = (*apvts.getRawParameterValue("sc_audition") > 0.5f);
 
     dsp.p_sc_td_amt = *apvts.getRawParameterValue("sc_td_amt");
-    dsp.p_sc_td_ms  = *apvts.getRawParameterValue("sc_td_ms");
+    dsp.p_sc_td_ms = *apvts.getRawParameterValue("sc_td_ms");
 
     // Transient/Flux
     dsp.p_tp_mode = (int)*apvts.getRawParameterValue("tp_mode");
@@ -153,8 +154,10 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     dsp.p_girth = *apvts.getRawParameterValue("girth");
     dsp.p_girth_freq_sel = (int)*apvts.getRawParameterValue("girth_freq");
 
-
-    // NOTE: Latency update removed from processBlock to prevent host issues
+    // DEBUGGING
+    dsp.p_debug_boost_q = *apvts.getRawParameterValue("dbg_bq");
+    dsp.p_debug_dip_q = *apvts.getRawParameterValue("dbg_dq");
+    dsp.p_debug_ratio = *apvts.getRawParameterValue("dbg_rat");
 
     // METERS
     const int numSamples = buffer.getNumSamples();
@@ -163,7 +166,8 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
     if (hasSidechainBus)
     {
-        auto& scBus = getBusBuffer(buffer, true, 1);
+        // FIXED: Removed '&' to satisfy MSVC compiler
+        auto scBus = getBusBuffer(buffer, true, 1);
         dsp.process(buffer, &scBus);
     }
     else
@@ -208,11 +212,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout UltimateCompAudioProcessor::
     // --- SIDECHAIN PARAMS ---
     layout.add(std::make_unique<juce::AudioParameterChoice>("sc_mode", "SC Input", juce::StringArray{ "In", "Ext" }, 0));
     layout.add(std::make_unique<juce::AudioParameterChoice>("ms_mode", "M/S Mode", juce::StringArray{ "Link", "Mid", "Side", "M>S", "S>M" }, 0));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("ms_balance", "M/S Balance", -12.0f, 12.0f, 0.0f)); // NEW
+    layout.add(std::make_unique<juce::AudioParameterFloat>("ms_balance", "M/S Balance", -12.0f, 12.0f, 0.0f));
 
     // Routing Toggles
     layout.add(std::make_unique<juce::AudioParameterBool>("sc_to_comp", "SC -> Comp", true));
-    // REMOVED: sc_to_sat
 
     // MAIN PARAMS
     layout.add(std::make_unique<juce::AudioParameterBool>("active_dyn", "Dynamics On", true));
@@ -238,7 +241,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UltimateCompAudioProcessor::
 
     layout.add(std::make_unique<juce::AudioParameterFloat>("makeup", "Comp Output", -24.0f, 24.0f, 0.0f));
 
-    // NEW: Compressor Auto-Gain Control
+    // Compressor Auto-Gain Control
     layout.add(std::make_unique<juce::AudioParameterChoice>("comp_autogain", "Comp Auto-Gain", juce::StringArray{ "Off", "Partial", "Full" }, 0));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>("dry_wet", "Dry/Wet %", 0.0f, 100.0f, 100.0f));
@@ -252,7 +255,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout UltimateCompAudioProcessor::
     layout.add(std::make_unique<juce::AudioParameterFloat>("det_rms", "RMS Window", 0.0f, 300.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("stereo_link", "Stereo Link %", 0.0f, 100.0f, 100.0f));
 
-    // UPDATED RANGES
     layout.add(std::make_unique<juce::AudioParameterFloat>("sc_hp_freq", "SC HPF", 0.0f, 8000.0f, 20.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("sc_lp_freq", "SC High Cut", 40.0f, 20000.0f, 20000.0f));
 
@@ -260,11 +262,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout UltimateCompAudioProcessor::
     layout.add(std::make_unique<juce::AudioParameterFloat>("sc_level_db", "SC Level (dB)", -24.0f, 24.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterBool>("sc_audition", "SC Audition", false));
 
-
-layout.add(std::make_unique<juce::AudioParameterFloat>("sc_td_amt", "SC TD Amount",
-    juce::NormalisableRange<float>(-100.0f, 100.0f, 0.1f), 0.0f));
-layout.add(std::make_unique<juce::AudioParameterFloat>("sc_td_ms", "SC TD M/S",
-    juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("sc_td_amt", "SC TD Amount",
+        juce::NormalisableRange<float>(-100.0f, 100.0f, 0.1f), 0.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("sc_td_ms", "SC TD M/S",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f));
 
     layout.add(std::make_unique<juce::AudioParameterChoice>("tp_mode", "Transient Priority", juce::StringArray{ "Off", "On" }, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>("tp_amount", "TP Amount %", 0.0f, 100.0f, 50.0f));
@@ -285,12 +286,13 @@ layout.add(std::make_unique<juce::AudioParameterFloat>("sc_td_ms", "SC TD M/S",
     layout.add(std::make_unique<juce::AudioParameterFloat>("harm_bright", "Harm Bright", -12.0f, 12.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("harm_freq", "Harm Freq", 1000.0f, 12000.0f, 4500.0f));
 
-    // GUI Helper state
     layout.add(std::make_unique<juce::AudioParameterBool>("show_help", "Show Tooltips", false));
 
-    // --- COLOR EQ: PULTEC-STYLE LOW END ---
     layout.add(std::make_unique<juce::AudioParameterFloat>("girth", "Girth", 0.0f, 12.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterChoice>("girth_freq", "Girth Freq", juce::StringArray{ "20", "30", "60", "100" }, 2));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("dbg_bq", "Debug: Boost Q", 0.1f, 3.0f, 0.5f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("dbg_dq", "Debug: Dip Q", 0.1f, 3.0f, 0.5f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("dbg_rat", "Debug: Dip Ratio", 0.1f, 2.0f, 0.35f));
 
     return layout;
 }

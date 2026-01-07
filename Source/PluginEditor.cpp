@@ -45,6 +45,12 @@ public:
         setColour(juce::TooltipWindow::backgroundColourId, c(bgB).darker());
         setColour(juce::TooltipWindow::textColourId, c(text));
         setColour(juce::TooltipWindow::outlineColourId, c(accent));
+
+        // TextButton (For Presets button)
+        setColour(juce::TextButton::buttonColourId, c(panel2));
+        setColour(juce::TextButton::buttonOnColourId, c(panel2).brighter());
+        setColour(juce::TextButton::textColourOffId, c(text2));
+        setColour(juce::TextButton::textColourOnId, c(white));
     }
 
     enum Palette { bgA, bgB, panel, panel2, edge, text, text2, accent, accent2, ok, warn, white, line };
@@ -167,6 +173,27 @@ public:
         g.setColour(on ? c(white) : c(text2));
         g.setFont(juce::FontOptions(11.0f).withStyle("bold"));
         g.drawFittedText(b.getButtonText(), box.toNearestInt(), juce::Justification::centred, 1);
+    }
+
+    // Custom Text Button drawing for the "PRESETS" button
+    void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour& backgroundColour,
+        bool isMouseOverButton, bool isButtonDown) override
+    {
+        // FIXED: Silenced unused warning
+        juce::ignoreUnused(isButtonDown);
+
+        auto r = button.getLocalBounds().toFloat();
+        g.setColour(backgroundColour);
+        g.fillRoundedRectangle(r, 4.0f);
+
+        g.setColour(c(edge));
+        g.drawRoundedRectangle(r, 4.0f, 1.0f);
+
+        if (isMouseOverButton)
+        {
+            g.setColour(c(accent).withAlpha(0.2f));
+            g.fillRoundedRectangle(r, 4.0f);
+        }
     }
 
     void drawComboBox(juce::Graphics& g, int width, int height, bool, int, int, int, int, juce::ComboBox&) override
@@ -346,17 +373,17 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kScLevel = makeKnob("SC Level", *lnf); kScLevel->setUnitSuffix("dB");
 
 
-kScTdAmt = makeKnob("TD Amt", *lnf); kScTdAmt->setUnitSuffix("%");
-kScTdMs = makeKnob("TD M/S", *lnf);
-kScTdMs->setTextFromValue([](double v)
-{
-    v = juce::jlimit(0.0, 100.0, v);
-    if (v < 0.5)  return juce::String("Mid");
-    if (v > 99.5) return juce::String("Side");
-    const int s = (int)std::round(v);
-    const int m = 100 - s;
-    return juce::String("M") + juce::String(m) + juce::String("/S") + juce::String(s);
-});
+    kScTdAmt = makeKnob("TD Amt", *lnf); kScTdAmt->setUnitSuffix("%");
+    kScTdMs = makeKnob("TD M/S", *lnf);
+    kScTdMs->setTextFromValue([](double v)
+        {
+            v = juce::jlimit(0.0, 100.0, v);
+            if (v < 0.5)  return juce::String("Mid");
+            if (v > 99.5) return juce::String("Side");
+            const int s = (int)std::round(v);
+            const int m = 100 - s;
+            return juce::String("M") + juce::String(m) + juce::String("/S") + juce::String(s);
+        });
 
     kCrestTarget = makeKnob("Crest Target", *lnf); kCrestTarget->setUnitSuffix("dB");
     kCrestSpeed = makeKnob("Crest Speed", *lnf); kCrestSpeed->setUnitSuffix("ms");
@@ -389,7 +416,6 @@ kScTdMs->setTextFromValue([](double v)
     kToneFreq = makeKnob("Freq", *lnf); kToneFreq->setUnitSuffix("Hz");
     kBright = makeKnob("Air", *lnf); kBright->setUnitSuffix("dB");
     kBrightFreq = makeKnob("Freq", *lnf); kBrightFreq->setUnitSuffix("Hz");
-
     // --- 2. Combos & Buttons ---
     auto prepCombo = [&](juce::ComboBox& b, UltimateLNF* theme = nullptr) {
         b.setJustificationType(juce::Justification::centred);
@@ -429,6 +455,13 @@ kScTdMs->setTextFromValue([](double v)
         else tooltipWindow.reset();
         };
     addAndMakeVisible(bHelp);
+
+    // ADDED: Presets Button
+    bPresets.setButtonText("PRESETS");
+    bPresets.onClick = [this] {
+        if (presetPanel) presetPanel->setVisibility(!presetPanel->isVisible());
+        };
+    addAndMakeVisible(bPresets);
 
     // --- 3. Panels ---
     panelDyn = std::make_unique<Panel>("Main Dynamics", *lnf);
@@ -476,7 +509,6 @@ kScTdMs->setTextFromValue([](double v)
     panelEq->addAndMakeVisible(*kGirth); panelEq->addAndMakeVisible(*kGirthFreq);
     panelEq->addAndMakeVisible(*kTone); panelEq->addAndMakeVisible(*kToneFreq);
     panelEq->addAndMakeVisible(*kBright); panelEq->addAndMakeVisible(*kBrightFreq);
-
     // --- 6. Bindings ---
     bindKnob(*kThresh, aThresh, "thresh", "dB", "Level where compression begins");
     bindKnob(*kRatio, aRatio, "ratio", "", "Amount of gain reduction applied");
@@ -498,8 +530,8 @@ kScTdMs->setTextFromValue([](double v)
     bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%", "Blend between Feed-Forward and Feed-Back");
     bindKnob(*kScLevel, aScLevel, "sc_level_db", "dB", "Trim the Sidechain signal level");
 
-bindKnob(*kScTdAmt, aScTdAmt, "sc_td_amt", "%", "Sidechain transient emphasis (detector feed): + boosts attack / - boosts sustain.");
-bindKnob(*kScTdMs,  aScTdMs,  "sc_td_ms",  "",  "Transient focus: 0 = Mid, 100 = Side (M/S domain).");
+    bindKnob(*kScTdAmt, aScTdAmt, "sc_td_amt", "%", "Sidechain transient emphasis (detector feed): + boosts attack / - boosts sustain.");
+    bindKnob(*kScTdMs, aScTdMs, "sc_td_ms", "", "Transient focus: 0 = Mid, 100 = Side (M/S domain).");
 
     bindKnob(*kCrestTarget, aCrestTarget, "crest_target", "dB", "Target Crest Factor (Peak vs RMS difference)");
     bindKnob(*kCrestSpeed, aCrestSpeed, "crest_speed", "ms", "Reaction speed of Crest controller");
@@ -516,7 +548,6 @@ bindKnob(*kScTdMs,  aScTdMs,  "sc_td_ms",  "",  "Transient focus: 0 = Mid, 100 =
     bindKnob(*kToneFreq, aToneFreq, "sat_tone_freq", "Hz", "Tilt EQ Center Frequency");
     bindKnob(*kBright, aBright, "harm_bright", "dB", "High Shelf Air gain");
     bindKnob(*kBrightFreq, aBrightFreq, "harm_freq", "Hz", "High Shelf Frequency");
-
     initCombo(cAutoRel, aAutoRel, "auto_rel", "Program Dependent Release");
     initCombo(cCompAutoGain, aCompAutoGain, "comp_autogain", "Automatic Makeup Gain");
     initCombo(cThrust, aThrust, "thrust_mode", "Sidechain weighting (Pink Noise)");
@@ -542,6 +573,13 @@ bindKnob(*kScTdMs,  aScTdMs,  "sc_td_ms",  "",  "Transient focus: 0 = Mid, 100 =
     aHelp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "show_help", bHelp);
 
     if (bHelp.getToggleState()) tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 400);
+
+    // ADDED: Create Preset Panel (hidden by default)
+    if (audioProcessor.presetManager)
+    {
+        presetPanel = std::make_unique<PresetPanel>(*audioProcessor.presetManager, *lnf);
+        addChildComponent(presetPanel.get()); // addChild makes it invisible but valid
+    }
 
     setResizable(true, true);
     setResizeLimits(1000, 600, 2000, 1200);
@@ -657,6 +695,10 @@ void UltimateCompAudioProcessorEditor::paint(juce::Graphics& g)
 
 void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
+    // FIXED: Don't draw meters/overlay if preset panel is visible (avoids bleed-through)
+    if (presetPanel && presetPanel->isVisible())
+        return;
+
     auto drawHugeMeter = [&](juce::Rectangle<int> r, float L, float R, juce::String label) {
         g.setColour(lnf->c(UltimateLNF::panel2).withAlpha(0.9f));
         g.fillRoundedRectangle(r.toFloat(), 6.0f);
@@ -778,10 +820,20 @@ void UltimateCompAudioProcessorEditor::resized()
     panelCrest->setHeaderHeight(headerH); panelTpFlux->setHeaderHeight(headerH);
     panelSat->setHeaderHeight(headerH); panelEq->setHeaderHeight(headerH);
 
+    // ADDED: Resize the preset panel to cover the main area
+    // Just slightly smaller than the window, centered
+    if (presetPanel)
+        presetPanel->setBounds(getLocalBounds().reduced(si(50)));
+
     auto topBar = r.removeFromTop(si(60.0f));
 
     const int helpS = si(24.0f);
     bHelp.setBounds(topBar.getRight() - helpS, topBar.getY() + si(8.0f), helpS, helpS);
+
+    // ADDED: Resize Preset Button
+    // To the left of the Help button
+    const int presetBtnW = si(80.0f);
+    bPresets.setBounds(bHelp.getX() - presetBtnW - si(10), bHelp.getY(), presetBtnW, helpS);
 
     const int meterH = si(24.0f); const int meterGap = si(6.0f);
     const int metersTotalWidth = juce::jmin(topBar.getWidth(), si(300.0f));
@@ -946,7 +998,6 @@ void UltimateCompAudioProcessorEditor::resized()
         placeKnob(kSatDrive.get(), c.removeFromLeft(w));
         placeKnob(kSatTrim.get(), c.removeFromLeft(w)); placeKnob(kSatMix.get(), c);
     }
-
     {
         auto c = panelEq->getContentBounds().reduced(si(4.0f));
         const int w = c.getWidth() / 6;

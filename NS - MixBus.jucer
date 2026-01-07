@@ -4,6 +4,8 @@
               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1">
   <MAINGROUP id="IBkhMR" name="NS - MixBus">
     <GROUP id="{0F82658C-A48F-F74B-408C-5A2F94E36019}" name="Source">
+      <FILE id="XbS0VL" name="PresetPanel.h" compile="0" resource="0" file="Source/PresetPanel.h"/>
+      <FILE id="LuK9M9" name="PresetManager.h" compile="0" resource="0" file="Source/PresetManager.h"/>
       <FILE id="HaxEjE" name="UltimateCompDSP.h" compile="0" resource="0"
             file="Source/UltimateCompDSP.h"/>
       <FILE id="qsZUlV" name="SimpleBiquad.h" compile="0" resource="0" file="Source/SimpleBiquad.h"/>

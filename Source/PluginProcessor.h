@@ -21,6 +21,7 @@
 #pragma warning(pop)
 #endif
 #include "UltimateCompDSP.h"
+#include "PresetManager.h" // ADDED
 
 class UltimateCompAudioProcessor : public juce::AudioProcessor
 {
@@ -57,6 +58,9 @@ public:
     void setStateInformation(const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState apvts;
+
+    // ADDED: Preset Manager
+    std::unique_ptr<PresetManager> presetManager;
 
     // --- METERING DATA ---
     std::atomic<float> meterInL{ 0.0f };

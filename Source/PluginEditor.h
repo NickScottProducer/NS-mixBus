@@ -8,6 +8,7 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "PresetPanel.h" // ADDED
 
 class UltimateCompAudioProcessorEditor final : public juce::AudioProcessorEditor,
     private juce::Timer
@@ -30,6 +31,10 @@ private:
 
     // Tooltip Helper - Changed to unique_ptr for complete destruction
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
+
+    // ADDED: Preset Panel & Button
+    std::unique_ptr<PresetPanel> presetPanel;
+    juce::TextButton bPresets;
 
     // Mirroring State Tracking
     float lastCompInputVal = 0.0f;
@@ -60,6 +65,7 @@ private:
     std::unique_ptr<Knob> kSatPre, kSatDrive, kSatTrim, kSatMix;
     std::unique_ptr<Knob> kGirth, kGirthFreq;
     std::unique_ptr<Knob> kTone, kToneFreq, kBright, kBrightFreq;
+
 
     juce::ComboBox cAutoRel, cThrust, cCtrlMode, cTpMode, cFluxMode, cSatMode, cSatAutoGain, cSignalFlow;
 
