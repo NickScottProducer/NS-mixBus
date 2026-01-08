@@ -46,8 +46,9 @@ void UltimateCompAudioProcessor::changeProgramName(int, const juce::String&) {}
 void UltimateCompAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     dsp.prepare(sampleRate, samplesPerBlock);
-    // Set latency once here. It will be constant thanks to UltimateCompDSP logic.
-    setLatencySamples((int)std::lround(dsp.getLatency()));
+    // Initialize latency based on current Saturation state.
+    lastLatencySamples = (int)std::lround(dsp.getLatency());
+    setLatencySamples(lastLatencySamples);
 }
 
 void UltimateCompAudioProcessor::releaseResources() { dsp.reset(); }
@@ -103,6 +104,18 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     dsp.p_active_tf = (*apvts.getRawParameterValue("active_tf") > 0.5f);
     dsp.p_active_sat = (*apvts.getRawParameterValue("active_sat") > 0.5f);
     dsp.p_active_eq = (*apvts.getRawParameterValue("active_eq") > 0.5f);
+
+    // --- LATENCY UPDATE (dynamic) ---
+    // Latency is only required when the oversampled Saturation block is active.
+    // When Saturation is bypassed, we report 0 latency to allow clean null/delta tests (no OS filters).
+    {
+        const int desiredLatency = (int)std::lround(dsp.getLatency());
+        if (desiredLatency != lastLatencySamples)
+        {
+            setLatencySamples(desiredLatency);
+            lastLatencySamples = desiredLatency;
+        }
+    }
 
     // Sidechain
     dsp.p_sc_input_mode = (int)*apvts.getRawParameterValue("sc_mode");

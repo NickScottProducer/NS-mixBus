@@ -127,10 +127,9 @@ public:
     float getFluxSaturation() const { return (float)flux_env; }
     float getCrestAmt() const { return (float)cf_amt; }
 
-    // FIXED: Return constant latency once prepared
-    double getLatency() const { return fixed_latency; }
-
-    // ==============================================================================
+    // Latency is only incurred when the Sat/EQ oversampled block is active.
+    double getLatency() const { return (p_active_sat ? (double)os_latency_samples : 0.0); }
+// ==============================================================================
     // LIFECYCLE
     // ==============================================================================
 
@@ -158,8 +157,8 @@ public:
             2, os_stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
         os_dry->initProcessing((size_t)max_block);
 
-        // Store fixed latency for host reporting
-        fixed_latency = os->getLatencyInSamples();
+        // Cache oversampling latency for host reporting
+        os_latency_samples = (int)os->getLatencyInSamples();
 
         juce::dsp::ProcessSpec spec;
         spec.sampleRate = s_rate;
@@ -168,16 +167,7 @@ public:
 
         satInternalDelay.prepare(spec);
         satInternalDelay.reset();
-        // NEW: Main bypass delay to maintain constant latency when Sat/EQ is off
-        mainBypassDelayWet.prepare(spec);
-        mainBypassDelayWet.reset();
-        mainBypassDelayWet.setDelay((float)fixed_latency);
-
-        mainBypassDelayDry.prepare(spec);
-        mainBypassDelayDry.reset();
-        mainBypassDelayDry.setDelay((float)fixed_latency);
-
-        // Pre-size RMS ring buffer (max 300 ms) so detector window changes never allocate on the audio thread.
+// Pre-size RMS ring buffer (max 300 ms) so detector window changes never allocate on the audio thread.
         rms_window_max = juce::jmax(1, (int)std::ceil(0.300 * s_rate));
         rms_ring_l.assign((size_t)rms_window_max, 0.0);
         rms_ring_r.assign((size_t)rms_window_max, 0.0);
@@ -196,12 +186,7 @@ public:
         if (os_dry) os_dry->reset();
 
         satInternalDelay.reset();
-        mainBypassDelayWet.reset();
-        mainBypassDelayDry.reset();
-        mainBypassDelayWet.setDelay((float)fixed_latency);
-        mainBypassDelayDry.setDelay((float)fixed_latency);
-
-        resetState();
+resetState();
     }
 
 
@@ -219,10 +204,7 @@ public:
         if (os) os->reset();
         if (os_dry) os_dry->reset();
         satInternalDelay.reset();
-        mainBypassDelayWet.reset();
-        mainBypassDelayDry.reset();
-
-        steel_phi_l = steel_phi_r = 0.0;
+steel_phi_l = steel_phi_r = 0.0;
         steel_prev_x_l = steel_prev_x_r = 0.0;
         sat_agc_gain_sm = 1.0;
         sc_level_sm = 1.0;
@@ -306,13 +288,7 @@ public:
         if (os_dry) os_dry->reset();
 
         satInternalDelay.reset();
-        mainBypassDelayWet.reset();
-        mainBypassDelayDry.reset();
-
-        mainBypassDelayWet.setDelay((float)fixed_latency);
-        mainBypassDelayDry.setDelay((float)fixed_latency);
-
-        armTopologyFade();
+armTopologyFade();
 
         prevTopoSatEq = satEq;
         prevTopoAudition = audition;
@@ -383,7 +359,7 @@ public:
                 processAuditionBlock(wet_buf);
 
                 // Preserve oversampling latency behavior so toggling audition does not change timing.
-                if ((p_active_sat || p_active_eq) && os)
+                if (p_active_sat && os)
                 {
                     auto block = juce::dsp::AudioBlock<float>(wet_buf);
                     auto osBlock = os->processSamplesUp(block);
@@ -408,30 +384,14 @@ public:
             // 4) Latency Compensation for DRY signal
             // If Saturation/EQ block ran, the wet signal is delayed by OS.
             // We must delay the dry signal to match.
-            if ((p_active_sat || p_active_eq) && os && os_dry)
+            if (p_active_sat && os && os_dry)
             {
                 auto block = juce::dsp::AudioBlock<float>(dry_buf);
                 auto osBlock = os_dry->processSamplesUp(block);
                 (void)osBlock;
                 os_dry->processSamplesDown(block);
             }
-            else
-            {
-                // Sat/EQ is inactive: the WET path did not go through OS,
-                // but we still report constant latency to the host. Apply matching delay to both paths.
-                if (!p_active_sat && !p_active_eq)
-                {
-                    juce::dsp::AudioBlock<float> wetBlock(wet_buf);
-                    juce::dsp::ProcessContextReplacing<float> ctxWet(wetBlock);
-                    mainBypassDelayWet.process(ctxWet);
-
-                    juce::dsp::AudioBlock<float> dryBlock(dry_buf);
-                    juce::dsp::ProcessContextReplacing<float> ctxDry(dryBlock);
-                    mainBypassDelayDry.process(ctxDry);
-                }
-            }
-
-            // 5) Final Mixer (write into the output buffer segment)
+// 5) Final Mixer (write into the output buffer segment)
             const double dw_target = p_sc_audition ? 1.0 : juce::jlimit(0.0, 1.0, (double)p_dry_wet / 100.0);
             drywet_sm = smooth1p(drywet_sm, dw_target, smooth_alpha_block);
 
@@ -657,6 +617,19 @@ private:
         float* sc_l = sc_internal_buf.getWritePointer(0);
         float* sc_r = sc_internal_buf.getWritePointer(1);
 
+        // TRUE BYPASS: If the Dynamics module is bypassed, do not touch the program signal.
+        // This guarantees null/bit-transparent behavior for "all modules bypassed" scenarios.
+        if (!p_active_dyn)
+        {
+            det_env = 0.0; env = 0.0;
+            env_l = env_r = 0.0;
+            env_fast = env_slow = 0.0;
+            env_fast_l = env_fast_r = 0.0;
+            env_slow_l = env_slow_r = 0.0;
+            fb_prev_l = fb_prev_r = 0.0;
+            return;
+        }
+
         const double thresh_target = (double)p_thresh;
         const double ratio_target = std::max(1.0, (double)p_ratio);
         const double knee_target = std::max(0.0, (double)p_knee);
@@ -733,18 +706,11 @@ private:
                 else if (p_ms_mode == 3) { det_in_l = mid; det_in_r = mid; }
                 else if (p_ms_mode == 4) { det_in_l = side; det_in_r = side; }
             }
-
-            if (p_active_dyn) {
-                // FIXED: Feedback uses fb_prev stored BEFORE makeup gain
-                det_in_l = det_in_l * (1.0 - fb_blend) + fb_prev_l * fb_blend;
-                det_in_r = det_in_r * (1.0 - fb_blend) + fb_prev_r * fb_blend;
-                runDetector(det_in_l, det_in_r);
-            }
-            else {
-                env = 0.0; det_env = 0.0;
-            }
-
-            // --- 4. APPLY GAIN REDUCTION ---
+            // FIXED: Feedback uses fb_prev stored BEFORE makeup gain
+            det_in_l = det_in_l * (1.0 - fb_blend) + fb_prev_l * fb_blend;
+            det_in_r = det_in_r * (1.0 - fb_blend) + fb_prev_r * fb_blend;
+            runDetector(det_in_l, det_in_r);
+// --- 4. APPLY GAIN REDUCTION ---
             const double lin_gain_l = std::pow(10.0, env_l / 20.0);
             const double lin_gain_r = std::pow(10.0, env_r / 20.0);
             const double lin_gain_mono = std::pow(10.0, env / 20.0);
@@ -1089,12 +1055,68 @@ private:
     void processSaturationBlock(juce::AudioBuffer<float>& io)
     {
         if (!p_active_sat && !p_active_eq) return;
-        if (!os) return;
 
         const int nCh = io.getNumChannels();
-        const int nS = io.getNumSamples();
+        const int nS  = io.getNumSamples();
 
-        // 1. Snapshot DRY (Source for AutoGain)
+        // ----------------------------------------------------------------------
+        // EQ-only path: when Saturation is bypassed but Color EQ is active,
+        // we process at the native sample rate (NO oversampling).
+        // This avoids the "phasey/top-end" delta residue caused by the OS up/down filters
+        // when the nonlinearity is not in use.
+        // ----------------------------------------------------------------------
+        if (!p_active_sat && p_active_eq)
+        {
+            // Snapshot DRY (for the section's Mix blend)
+            sat_clean_buf.setSize(nCh, nS, false, false, true);
+            sat_proc_buf.setSize(nCh, nS, false, false, true);
+
+            for (int ch = 0; ch < nCh; ++ch)
+            {
+                sat_clean_buf.copyFrom(ch, 0, io, ch, 0, nS);
+                sat_proc_buf.copyFrom(ch, 0, io, ch, 0, nS);
+            }
+
+            const bool eq_tone_active  = (std::abs(p_sat_tone) > 0.01f);
+            const bool eq_girth_active = (std::abs(p_girth) > 0.01f);
+
+            for (int ch = 0; ch < nCh; ++ch)
+            {
+                float* y = sat_proc_buf.getWritePointer(ch);
+                auto& tone  = (ch == 0) ? sat_tone_l     : sat_tone_r;
+                auto& gBump = (ch == 0) ? girth_bump_l   : girth_bump_r;
+                auto& gDip  = (ch == 0) ? girth_dip_l    : girth_dip_r;
+
+                for (int i = 0; i < nS; ++i)
+                {
+                    double s = (double)y[i];
+                    if (eq_girth_active) { s = gBump.process(s); s = gDip.process(s); }
+                    if (eq_tone_active)  { s = tone.process(s); }
+                    y[i] = (float)s;
+                }
+            }
+
+            // Smooth mix to avoid zipper noise during automation.
+            sat_mix_sm = smooth1p(sat_mix_sm, sat_mix_target, smooth_alpha_block);
+            const float satMix01 = (float)juce::jlimit(0.0, 1.0, sat_mix_sm);
+
+            // Blend processed EQ against the dry snapshot (preserves existing behavior of Sat Mix).
+            for (int ch = 0; ch < nCh; ++ch)
+            {
+                float* out = io.getWritePointer(ch);
+                const float* wet = sat_proc_buf.getReadPointer(ch);
+                const float* dry = sat_clean_buf.getReadPointer(ch);
+
+                for (int i = 0; i < nS; ++i)
+                    out[i] = dry[i] + (wet[i] - dry[i]) * satMix01;
+            }
+
+            return;
+        }
+
+        if (!os) return;
+
+// 1. Snapshot DRY (Source for AutoGain)
         sat_clean_buf.setSize(nCh, nS, false, false, true);
         for (int ch = 0; ch < nCh; ++ch)
             sat_clean_buf.copyFrom(ch, 0, io, ch, 0, nS);
@@ -1287,7 +1309,7 @@ private:
 
     double s_rate = 44100.0;
     int max_block = 512;
-    double fixed_latency = 0.0; // Constant latency report
+    int os_latency_samples = 0; // Oversampling latency (samples)
 
     std::unique_ptr<juce::dsp::Oversampling<float>> os;
     std::unique_ptr<juce::dsp::Oversampling<float>> os_dry;
@@ -1296,13 +1318,8 @@ private:
     int os_factor = 4;
     double os_srate = 176400.0;
 
-    juce::dsp::DelayLine<float> satInternalDelay{ 8192 };
-    // IMPORTANT: Wet and Dry need independent delay lines; reusing the same DelayLine instance
-    // for both buffers will corrupt the delay state and cause phase/latency mismatches.
-    juce::dsp::DelayLine<float> mainBypassDelayWet{ 8192 };
-    juce::dsp::DelayLine<float> mainBypassDelayDry{ 8192 };
-
-    // Filters (Comp)
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Thiran> satInternalDelay{ 8192 };
+// Filters (Comp)
     SimpleBiquad sc_hp_l, sc_hp_r, sc_hp_l_2, sc_hp_r_2;
     SimpleBiquad sc_lp_l, sc_lp_r, sc_lp_l_2, sc_lp_r_2;
     // REMOVED: Filters (Sat)

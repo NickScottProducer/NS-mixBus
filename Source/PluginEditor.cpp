@@ -267,6 +267,23 @@ public:
         // Reset Opacity
         g.setOpacity(1.0f);
     }
+
+    void enablementChanged() override
+    {
+        // Grey-out the actual rotary control (child slider) when this Knob is disabled.
+        const bool en = isEnabled();
+
+        slider.setEnabled(en);
+        valueLabel.setEnabled(en);
+
+        // Force a visible dim even if the LookAndFeel doesn't special-case disabled sliders.
+        slider.setAlpha(en ? 1.0f : 0.35f);
+        // Keep label readable; its disabled colours already grey it out.
+        valueLabel.setAlpha(1.0f);
+
+        repaint();
+    }
+
     void resized() override {
         const int textH = juce::jlimit(12, 20, (int)std::lround(getHeight() * 0.18f));
         auto r = getLocalBounds();
@@ -805,6 +822,71 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 
         g.strokePath(p, juce::PathStrokeType(2.0f));
     }
+
+
+// --- DRAW CYAN "SISTER" CONNECTION LINES (always-on) ---
+// NOTE: Drawn in paintOverChildren so they are guaranteed visible above the UI.
+auto centerInEditor = [this](juce::Component* c) -> juce::Point<float>
+{
+    if (c == nullptr) return {};
+    // Convert the component's local centre to this editor's coordinate space (works even if nested in panels).
+    const auto localCentre = c->getLocalBounds().getCentre();
+    const auto global      = c->localPointToGlobal(localCentre);
+    const auto editorLocal = this->getLocalPoint(nullptr, global);
+    return editorLocal.toFloat();
+};
+
+auto approxRadius = [](juce::Component* c) -> float
+{
+    if (c == nullptr) return 0.0f;
+    const auto lb = c->getLocalBounds().toFloat();
+    return 0.5f * std::min(lb.getWidth(), lb.getHeight());
+};
+
+auto drawSister = [&](juce::Component* a, juce::Component* b)
+{
+    if (a == nullptr || b == nullptr) return;
+    if (!a->isShowing() || !b->isShowing()) return;
+
+    auto pa = centerInEditor(a);
+    auto pb = centerInEditor(b);
+
+    auto ra = approxRadius(a);
+    auto rb = approxRadius(b);
+
+    auto v = pb - pa;
+    const float len = v.getDistanceFromOrigin();
+    if (len < 1.0f) return;
+
+    const auto dir = v / len;
+
+    // Start/end slightly outside the controls so the line is not hidden under knob faces.
+    pa += dir * (ra * 0.75f);
+    pb -= dir * (rb * 0.75f);
+
+    juce::Path path;
+    path.startNewSubPath(pa);
+    path.lineTo(pb);
+
+    // Subtle glow + crisp core so it is unmissable.
+    g.setColour(juce::Colours::cyan.withAlpha(0.25f));
+    g.strokePath(path, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    g.setColour(juce::Colours::cyan.withAlpha(0.90f));
+    g.strokePath(path, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // End-caps
+    g.setColour(juce::Colours::cyan.withAlpha(0.95f));
+    g.fillEllipse(pa.x - 2.5f, pa.y - 2.5f, 5.0f, 5.0f);
+    g.fillEllipse(pb.x - 2.5f, pb.y - 2.5f, 5.0f, 5.0f);
+};
+
+// Amount <-> Frequency pairs (your primary "sister" pattern)
+drawSister(kGirth.get(),  kGirthFreq.get());
+drawSister(kTone.get(),   kToneFreq.get());
+drawSister(kBright.get(), kBrightFreq.get());
+
+// Other obvious "paired" controls
 }
 
 void UltimateCompAudioProcessorEditor::resized()

@@ -74,6 +74,7 @@ public:
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     UltimateCompDSP dsp;
+    int lastLatencySamples = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(UltimateCompAudioProcessor)
 };
