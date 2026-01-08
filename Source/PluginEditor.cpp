@@ -465,7 +465,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
 
     bHelp.setButtonText("?");
     bHelp.setClickingTogglesState(true);
-    bHelp.setTooltip("Enable/Disable Tooltips");
+    bHelp.setTooltip("Tooltips On/Off\nWhen enabled, hover any control to see detailed help.");
     bHelp.onClick = [this] {
         bool show = bHelp.getToggleState();
         if (show) tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 400);
@@ -496,12 +496,12 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
         att = std::make_unique<ButtonAttachment>(audioProcessor.apvts, paramId, b);
         addAndMakeVisible(b);
         };
-    setupPowerBtn(bActiveDyn, "active_dyn", aActiveDyn, "Bypass Compressor Module");
-    setupPowerBtn(bActiveDet, "active_det", aActiveDet, "Bypass Sidechain Filtering");
-    setupPowerBtn(bActiveCrest, "active_crest", aActiveCrest, "Bypass Crest Control");
-    setupPowerBtn(bActiveTpFlux, "active_tf", aActiveTpFlux, "Bypass Transient/Flux");
-    setupPowerBtn(bActiveSat, "active_sat", aActiveSat, "Bypass Saturation Module");
-    setupPowerBtn(bActiveEq, "active_eq", aActiveEq, "Bypass EQ Module");
+    setupPowerBtn(bActiveDyn, "active_dyn", aActiveDyn, "Main Dynamics on/off\nBypasses the compressor section (no gain reduction when off).");
+    setupPowerBtn(bActiveDet, "active_det", aActiveDet, "Sidechain section on/off\nBypasses sidechain filtering/transient-focus controls (detector hears unshaped SC when off).");
+    setupPowerBtn(bActiveCrest, "active_crest", aActiveCrest, "Crest control on/off\nDisables Auto-Crest targeting (Crest Target/Speed have no effect when off).");
+    setupPowerBtn(bActiveTpFlux, "active_tf", aActiveTpFlux, "Transient/Flux on/off\nDisables Transient Priority and Flux Coupling behaviors.");
+    setupPowerBtn(bActiveSat, "active_sat", aActiveSat, "Saturation on/off\nBypasses the transformer/saturation stage (clean pass when off).");
+    setupPowerBtn(bActiveEq, "active_eq", aActiveEq, "Color EQ on/off\nBypasses the Girth/Tone/Air EQ stage.");
 
     // --- 5. Add Children ---
     panelDyn->addAndMakeVisible(*kThresh); panelDyn->addAndMakeVisible(*kRatio); panelDyn->addAndMakeVisible(*kKnee);
@@ -527,65 +527,65 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     panelEq->addAndMakeVisible(*kTone); panelEq->addAndMakeVisible(*kToneFreq);
     panelEq->addAndMakeVisible(*kBright); panelEq->addAndMakeVisible(*kBrightFreq);
     // --- 6. Bindings ---
-    bindKnob(*kThresh, aThresh, "thresh", "dB", "Level where compression begins");
-    bindKnob(*kRatio, aRatio, "ratio", "", "Amount of gain reduction applied");
-    bindKnob(*kKnee, aKnee, "knee", "dB", "Softness of the threshold transition");
-    bindKnob(*kAttack, aAttack, "att_ms", "ms", "How fast compression engages");
-    bindKnob(*kRelease, aRelease, "rel_ms", "ms", "How fast compression recovers");
-    bindKnob(*kCompInput, aCompInput, "comp_input", "dB", "Input Drive into Compressor");
+    bindKnob(*kThresh, aThresh, "thresh", "dB", "Threshold\nSets the level where compression starts. Lower = more gain reduction.");
+    bindKnob(*kRatio, aRatio, "ratio", "", "Ratio\nControls how strongly levels above threshold are reduced (higher = harder compression).");
+    bindKnob(*kKnee, aKnee, "knee", "dB", "Knee\nSoftens the transition around threshold. Higher = smoother, lower = harder.");
+    bindKnob(*kAttack, aAttack, "att_ms", "ms", "Attack\nTime for gain reduction to engage. Lower clamps transients; higher lets punch through. Turbo enables 10x faster range.");
+    bindKnob(*kRelease, aRelease, "rel_ms", "ms", "Release\nTime for gain reduction to recover. Lower = snappier/more movement; higher = smoother glue. Turbo enables 10x faster range.");
+    bindKnob(*kCompInput, aCompInput, "comp_input", "dB", "Comp Input\nGain into the compressor. Use to drive more GR; Mirror can help keep loudness stable.");
 
     if (auto* param = audioProcessor.apvts.getParameter("comp_input"))
         lastCompInputVal = param->convertFrom0to1(param->getValue());
 
-    bindKnob(*kMakeup, aMakeup, "makeup", "dB", "Output Gain (Makeup)");
-    bindKnob(*kMix, aMix, "dry_wet", "%", "Parallel Mix blend");
-    bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz", "Sidechain Low Cut Filter");
-    bindKnob(*kScLpf, aScLpf, "sc_lp_freq", "Hz", "Sidechain High Cut Filter");
-    bindKnob(*kDetRms, aDetRms, "det_rms", "ms", "RMS Window length for detector");
-    bindKnob(*kStereoLink, aStereoLink, "stereo_link", "%", "Links Left/Right detection");
-    bindKnob(*kMsBalance, aMsBalance, "ms_balance", "dB", "M/S Balance offset for Cross-comp modes");
-    bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%", "Blend between Feed-Forward and Feed-Back");
-    bindKnob(*kScLevel, aScLevel, "sc_level_db", "dB", "Trim the Sidechain signal level");
+    bindKnob(*kMakeup, aMakeup, "makeup", "dB", "Makeup\nPost-compressor output gain. Use to match bypass level, or enable Auto Gain for compensation.");
+    bindKnob(*kMix, aMix, "dry_wet", "%", "Mix\nParallel blend: 0% = dry, 100% = fully compressed.");
+    bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz", "SC Low Cut\nHigh-pass filter for the detector. Raise to reduce low-end pumping (detection only).");
+    bindKnob(*kScLpf, aScLpf, "sc_lp_freq", "Hz", "SC High Cut\nLow-pass filter for the detector. Lower to smooth spiky triggering (detection only).");
+    bindKnob(*kDetRms, aDetRms, "det_rms", "ms", "Detector RMS Window\nAveraging time for RMS detection. Higher = smoother; lower = peakier/transient-driven.");
+    bindKnob(*kStereoLink, aStereoLink, "stereo_link", "%", "Stereo Link\nLinks L/R detection. Higher keeps the stereo image stable; lower allows more independent action.");
+    bindKnob(*kMsBalance, aMsBalance, "ms_balance", "dB", "M/S Balance\nOffsets Mid vs Side emphasis in cross-comp modes (M>S or S>M). Positive biases Mid; negative biases Side.");
+    bindKnob(*kFbBlend, aFbBlend, "fb_blend", "%", "FF/FB Blend\nBlends feed-forward (punchy/precise) and feedback (smooth/glue) behavior.");
+    bindKnob(*kScLevel, aScLevel, "sc_level_db", "dB", "Sidechain Level\nTrims detector input level. Raise to increase SC-driven GR; lower to reduce (useful for external SC calibration).");
 
-    bindKnob(*kScTdAmt, aScTdAmt, "sc_td_amt", "%", "Sidechain transient emphasis (detector feed): + boosts attack / - boosts sustain.");
-    bindKnob(*kScTdMs, aScTdMs, "sc_td_ms", "", "Transient focus: 0 = Mid, 100 = Side (M/S domain).");
+    bindKnob(*kScTdAmt, aScTdAmt, "sc_td_amt", "%", "SC Transient Emphasis\nShapes what the detector hears. + emphasizes attack (reacts to hits); - emphasizes sustain/decay.");
+    bindKnob(*kScTdMs, aScTdMs, "sc_td_ms", "", "SC Emphasis Focus (M/S)\nWhere transient emphasis is applied: 0 = Mid, 100 = Side.");
 
-    bindKnob(*kCrestTarget, aCrestTarget, "crest_target", "dB", "Target Crest Factor (Peak vs RMS difference)");
-    bindKnob(*kCrestSpeed, aCrestSpeed, "crest_speed", "ms", "Reaction speed of Crest controller");
-    bindKnob(*kTpAmt, aTpAmt, "tp_amount", "%", "Amount of transient preservation");
-    bindKnob(*kTpRaise, aTpRaise, "tp_thresh_raise", "dB", "How much to raise threshold for transients");
-    bindKnob(*kFluxAmt, aFluxAmt, "flux_amount", "%", "Couples Saturation drive to Compression threshold");
-    bindKnob(*kSatPre, aSatPre, "sat_pre_gain", "dB", "Input gain into Saturation");
-    bindKnob(*kSatDrive, aSatDrive, "sat_drive", "dB", "Drive amount for Transformer");
-    bindKnob(*kSatTrim, aSatTrim, "sat_trim", "dB", "Post-Saturation output trim");
-    bindKnob(*kSatMix, aSatMix, "sat_mix", "%", "Blend of Clean vs Saturated signal");
-    bindKnob(*kGirth, aGirth, "girth", "dB", "Pultec-style low-end: resonant boost + dip");
-    bindKnob(*kGirthFreq, aGirthFreq, "girth_freq", "Hz", "Girth frequency selector (20/30/60/100 Hz)");
-    bindKnob(*kTone, aTone, "sat_tone", "dB", "Tilt EQ gain");
-    bindKnob(*kToneFreq, aToneFreq, "sat_tone_freq", "Hz", "Tilt EQ Center Frequency");
-    bindKnob(*kBright, aBright, "harm_bright", "dB", "High Shelf Air gain");
-    bindKnob(*kBrightFreq, aBrightFreq, "harm_freq", "Hz", "High Shelf Frequency");
-    initCombo(cAutoRel, aAutoRel, "auto_rel", "Program Dependent Release");
-    initCombo(cCompAutoGain, aCompAutoGain, "comp_autogain", "Automatic Makeup Gain");
-    initCombo(cThrust, aThrust, "thrust_mode", "Sidechain weighting (Pink Noise)");
-    initCombo(cCtrlMode, aCtrlMode, "ctrl_mode", "Enables Auto-Crest control");
-    initCombo(cTpMode, aTpMode, "tp_mode", "Enables Transient Priority");
-    initCombo(cFluxMode, aFluxMode, "flux_mode", "Enables Flux Coupling");
-    initCombo(cSatMode, aSatMode, "sat_mode", "Transformer Color Model");
-    initCombo(cSatAutoGain, aSatAutoGain, "sat_autogain", "Maintains unity gain through Saturation");
-    initCombo(cSignalFlow, aSignalFlow, "signal_flow", "Order of processing modules");
-    initCombo(cScMode, cScModeAtt, "sc_mode", "Internal or External Sidechain source");
-    initCombo(cMsMode, aMsMode, "ms_mode", "Mid/Side processing mode");
+    bindKnob(*kCrestTarget, aCrestTarget, "crest_target", "dB", "Crest Target\nTarget Peak-RMS difference for Auto-Crest. Higher = more punch; lower = denser/flattened dynamics.");
+    bindKnob(*kCrestSpeed, aCrestSpeed, "crest_speed", "ms", "Crest Speed\nHow quickly Auto-Crest adapts. Lower = faster tracking; higher = slower, smoother adjustments.");
+    bindKnob(*kTpAmt, aTpAmt, "tp_amount", "%", "Transient Priority Amount\nPreserves attacks by easing compression on transients. Higher = more punch retention.");
+    bindKnob(*kTpRaise, aTpRaise, "tp_thresh_raise", "dB", "Transient Threshold Raise\nRaises the effective threshold during detected transients so hits pass before the body is compressed.");
+    bindKnob(*kFluxAmt, aFluxAmt, "flux_amount", "%", "Flux Coupling Amount\nLinks saturation drive and compressor behavior for a more 'alive' response (use with Flux Mode).");
+    bindKnob(*kSatPre, aSatPre, "sat_pre_gain", "dB", "Saturation Pre-Gain\nGain into the saturation block. Drives the transformer harder for more harmonics.");
+    bindKnob(*kSatDrive, aSatDrive, "sat_drive", "dB", "Saturation Drive\nAdds drive within the transformer model for more harmonic density and soft clipping/compression.");
+    bindKnob(*kSatTrim, aSatTrim, "sat_trim", "dB", "Saturation Trim\nPost-saturation output trim for level matching. Combine with Mirror or AutoGain to keep loudness consistent.");
+    bindKnob(*kSatMix, aSatMix, "sat_mix", "%", "Saturation Mix\nBlend between clean and saturated signal (parallel saturation).");
+    bindKnob(*kGirth, aGirth, "girth", "dB", "Girth\nPultec-style low-end trick: resonant boost + complementary dip for thicker subs with less mud.");
+    bindKnob(*kGirthFreq, aGirthFreq, "girth_freq", "Hz", "Girth Frequency\nSelects the center frequency for the Girth curve (20 / 30 / 60 / 100 Hz).");
+    bindKnob(*kTone, aTone, "sat_tone", "dB", "Tone (Tilt)\nTilt EQ around Tone Frequency. + brightens, - darkens without a traditional shelf shape.");
+    bindKnob(*kToneFreq, aToneFreq, "sat_tone_freq", "Hz", "Tone Frequency\nPivot/center frequency for the Tilt EQ.");
+    bindKnob(*kBright, aBright, "harm_bright", "dB", "Air Shelf\nHigh-shelf boost for sheen/air. Adds top-end sparkle and harmonic brightness.");
+    bindKnob(*kBrightFreq, aBrightFreq, "harm_freq", "Hz", "Air Shelf Frequency\nCorner frequency for the Air shelf.");
+    initCombo(cAutoRel, aAutoRel, "auto_rel", "Release Mode\nManual uses the Release knob. Auto adapts release to program material for smoother glue and fewer artifacts.");
+    initCombo(cCompAutoGain, aCompAutoGain, "comp_autogain", "Compressor Auto Gain\nAttempts to maintain loudness as gain reduction changes. Partial = subtle; Full = stronger makeup.");
+    initCombo(cThrust, aThrust, "thrust_mode", "Thrust (Detector Voicing)\nPink-noise style weighting for the detector. Higher settings de-emphasize lows to reduce pumping.");
+    initCombo(cCtrlMode, aCtrlMode, "ctrl_mode", "Crest Control Mode\nManual = standard compression. Auto engages crest-factor targeting using Crest Target and Crest Speed.");
+    initCombo(cTpMode, aTpMode, "tp_mode", "Transient Priority\nOn preserves attacks by easing compression on transients (use TP Amount / TP Raise).");
+    initCombo(cFluxMode, aFluxMode, "flux_mode", "Flux Coupling\nOn links saturation drive and compressor behavior (use Flux Amount).");
+    initCombo(cSatMode, aSatMode, "sat_mode", "Transformer Model\nSelects saturation character: Clean (subtle), Iron (warmer/darker), Steel (more aggressive).");
+    initCombo(cSatAutoGain, aSatAutoGain, "sat_autogain", "Saturation Auto Gain\nGain compensation through the saturation stage. Partial = conservative; Full = stronger level matching.");
+    initCombo(cSignalFlow, aSignalFlow, "signal_flow", "Signal Flow\nComp>Sat = compress then add color. Sat>Comp = saturate first, then compress harmonics.");
+    initCombo(cScMode, cScModeAtt, "sc_mode", "Sidechain Source\nIn uses the internal input. Ext uses the host sidechain input (typically channels 3/4).");
+    initCombo(cMsMode, aMsMode, "ms_mode", "Mid/Side Mode\nLink = normal stereo. Mid/Side process that component only. M>S / S>M cross-comp one component from the other.");
 
-    bTurboAtt.setTooltip("10x Faster Attack range");
+    bTurboAtt.setTooltip("Turbo Attack Range\nExtends Attack into 10x faster times for tighter, more aggressive transient control.");
     aTurboAtt = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_att", bTurboAtt);
-    bTurboRel.setTooltip("10x Faster Release range");
+    bTurboRel.setTooltip("Turbo Release Range\nExtends Release into 10x faster times for snappier recovery and more rhythmic movement.");
     aTurboRel = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_rel", bTurboRel);
-    bMirror.setTooltip("Links Pre-Gain and Trim inversely");
+    bMirror.setTooltip("Mirror (Sat Pre/Trim)\nLinks Saturation Pre-Gain and Trim inversely to help keep output level steadier while driving harmonics.");
     aMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sat_mirror", bMirror);
-    bCompMirror.setTooltip("Links Input and Output inversely");
+    bCompMirror.setTooltip("Mirror (Comp Input/Makeup)\nLinks Compressor Input and Makeup inversely to keep loudness roughly constant while you drive the compressor.");
     aCompMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "comp_mirror", bCompMirror);
-    bScToComp.setTooltip("Route Sidechain signal to Compressor detector");
+    bScToComp.setTooltip("SC -> Comp Detector\nUses the sidechain signal as the compressor detector input (filtered/processed SC drives gain reduction).");
     aScToComp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_to_comp", bScToComp);
     aHelp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "show_help", bHelp);
 
