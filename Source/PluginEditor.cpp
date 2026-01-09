@@ -147,7 +147,6 @@ public:
         auto r = b.getLocalBounds().toFloat().reduced(2.0f);
 
         // ALLOW LONGER TEXT FOR BADGES like "Mirror" or "SC->Comp"
-        // UPDATED: Threshold increased to accommodate "Faster/Harder"
         bool isSmall = b.getButtonText().length() <= 16;
 
         const float boxW = isSmall ? r.getWidth() : 32.0f;
@@ -179,7 +178,6 @@ public:
     void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour& backgroundColour,
         bool isMouseOverButton, bool isButtonDown) override
     {
-        // FIXED: Silenced unused warning
         juce::ignoreUnused(isButtonDown);
 
         auto r = button.getLocalBounds().toFloat();
@@ -276,9 +274,7 @@ public:
         slider.setEnabled(en);
         valueLabel.setEnabled(en);
 
-        // Force a visible dim even if the LookAndFeel doesn't special-case disabled sliders.
         slider.setAlpha(en ? 1.0f : 0.35f);
-        // Keep label readable; its disabled colours already grey it out.
         valueLabel.setAlpha(1.0f);
 
         repaint();
@@ -381,6 +377,15 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kMakeup = makeKnob("Output", *lnf); kMakeup->setUnitSuffix("dB");
     kMix = makeKnob("Mix", *lnf); kMix->setUnitSuffix("%");
 
+    // Global I/O Gains (pre/post everything) + STUFF Level (Mojo Output)
+    kInGain = makeKnob("In", *lnf); kInGain->setUnitSuffix("dB");
+    kOutGain = makeKnob("Out", *lnf); kOutGain->setUnitSuffix("dB");
+
+    kStuffBal = makeKnob("Level", *lnf);
+    kStuffBal->setUnitSuffix("dB");
+    kStuffBal->setVisible(false);
+
+
     kScHpf = makeKnob("Low Cut", *lnf); kScHpf->setUnitSuffix("Hz");
     kScLpf = makeKnob("High Cut", *lnf); kScLpf->setUnitSuffix("Hz");
     kDetRms = makeKnob("RMS Window", *lnf); kDetRms->setUnitSuffix("ms");
@@ -468,8 +473,14 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     bHelp.setTooltip("Tooltips On/Off\nWhen enabled, hover any control to see detailed help.");
     bHelp.onClick = [this] {
         bool show = bHelp.getToggleState();
-        if (show) tooltipWindow = std::make_unique<juce::TooltipWindow>(nullptr, 400);
-        else tooltipWindow.reset();
+        if (show) {
+            tooltipWindow = std::make_unique<juce::TooltipWindow>(nullptr, 400);
+            tooltipWindow->setLookAndFeel(lnf.get());
+            tooltipWindow->setAlwaysOnTop(true);
+        }
+        else {
+            tooltipWindow.reset();
+        }
         };
     addAndMakeVisible(bHelp);
 
@@ -479,6 +490,17 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
         if (presetPanel) presetPanel->setVisibility(!presetPanel->isVisible());
         };
     addAndMakeVisible(bPresets);
+
+
+    // MOJO Button (Parallel Analog Magic)
+    bMojo.setButtonText("STUFF");
+    bMojo.setClickingTogglesState(true);
+    bMojo.setTooltip("'stuff'\nAdds calibrated parallel analog push/grit/gnarl without changing the main compressor calibration.");
+    addAndMakeVisible(bMojo);
+
+    addAndMakeVisible(*kInGain);
+    addAndMakeVisible(*kOutGain);
+    addAndMakeVisible(*kStuffBal);
 
     // --- 3. Panels ---
     panelDyn = std::make_unique<Panel>("Main Dynamics", *lnf);
@@ -530,8 +552,8 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     bindKnob(*kThresh, aThresh, "thresh", "dB", "Threshold\nSets the level where compression starts. Lower = more gain reduction.");
     bindKnob(*kRatio, aRatio, "ratio", "", "Ratio\nControls how strongly levels above threshold are reduced (higher = harder compression).");
     bindKnob(*kKnee, aKnee, "knee", "dB", "Knee\nSoftens the transition around threshold. Higher = smoother, lower = harder.");
-    bindKnob(*kAttack, aAttack, "att_ms", "ms", "Attack\nTime for gain reduction to engage. Lower clamps transients; higher lets punch through. Turbo enables 10x faster range.");
-    bindKnob(*kRelease, aRelease, "rel_ms", "ms", "Release\nTime for gain reduction to recover. Lower = snappier/more movement; higher = smoother glue. Turbo enables 10x faster range.");
+    bindKnob(*kAttack, aAttack, "att_ms", "ms", "Attack\nTime for gain reduction to engage. Lower clamps transients; higher lets punch through. 'Faster/Harder' enables 10x faster range.");
+    bindKnob(*kRelease, aRelease, "rel_ms", "ms", "Release\nTime for gain reduction to recover. Lower = snappier/more movement; higher = smoother glue. 'Faster/Harder' enables 10x faster range.");
     bindKnob(*kCompInput, aCompInput, "comp_input", "dB", "Comp Input\nGain into the compressor. Use to drive more GR; Mirror can help keep loudness stable.");
 
     if (auto* param = audioProcessor.apvts.getParameter("comp_input"))
@@ -539,6 +561,10 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
 
     bindKnob(*kMakeup, aMakeup, "makeup", "dB", "Makeup\nPost-compressor output gain. Use to match bypass level, or enable Auto Gain for compensation.");
     bindKnob(*kMix, aMix, "dry_wet", "%", "Mix\nParallel blend: 0% = dry, 100% = fully compressed.");
+
+    bindKnob(*kInGain, aInGain, "in_gain", "dB", "Global Input Gain\nPre everything. Use to drive the processor harder without changing the compressor's internal Input knob.");
+    bindKnob(*kOutGain, aOutGain, "out_trim", "dB", "Global Output Gain\nPost everything. Final output trim feeding the OUT meter.");
+    bindKnob(*kStuffBal, aStuffBal, "stuff_bal", "dB", "Stuff Level\nAdjusts the output volume of the parallel Stuff signal.");
     bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz", "SC Low Cut\nHigh-pass filter for the detector. Raise to reduce low-end pumping (detection only).");
     bindKnob(*kScLpf, aScLpf, "sc_lp_freq", "Hz", "SC High Cut\nLow-pass filter for the detector. Lower to smooth spiky triggering (detection only).");
     bindKnob(*kDetRms, aDetRms, "det_rms", "ms", "Detector RMS Window\nAveraging time for RMS detection. Higher = smoother; lower = peakier/transient-driven.");
@@ -577,9 +603,9 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     initCombo(cScMode, cScModeAtt, "sc_mode", "Sidechain Source\nIn uses the internal input. Ext uses the host sidechain input (typically channels 3/4).");
     initCombo(cMsMode, aMsMode, "ms_mode", "Mid/Side Mode\nLink = normal stereo. Mid/Side process that component only. M>S / S>M cross-comp one component from the other.");
 
-    bTurboAtt.setTooltip("Turbo Attack Range\nExtends Attack into 10x faster times for tighter, more aggressive transient control.");
+    bTurboAtt.setTooltip("'Faster/Harder' Attack Range\nExtends Attack into 10x faster times for tighter, more aggressive transient control.");
     aTurboAtt = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_att", bTurboAtt);
-    bTurboRel.setTooltip("Turbo Release Range\nExtends Release into 10x faster times for snappier recovery and more rhythmic movement.");
+    bTurboRel.setTooltip("'Faster/Harder' Release Range\nExtends Release into 10x faster times for snappier recovery and more rhythmic movement.");
     aTurboRel = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "turbo_rel", bTurboRel);
     bMirror.setTooltip("Mirror (Sat Pre/Trim)\nLinks Saturation Pre-Gain and Trim inversely to help keep output level steadier while driving harmonics.");
     aMirror = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sat_mirror", bMirror);
@@ -589,7 +615,15 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     aScToComp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_to_comp", bScToComp);
     aHelp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "show_help", bHelp);
 
-    if (bHelp.getToggleState()) tooltipWindow = std::make_unique<juce::TooltipWindow>(nullptr, 400);
+
+    aMojo = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "stuff", bMojo);
+
+    // FIXED: Using nullptr + setAlwaysOnTop to force desktop window z-order
+    if (bHelp.getToggleState()) {
+        tooltipWindow = std::make_unique<juce::TooltipWindow>(nullptr, 400);
+        tooltipWindow->setLookAndFeel(lnf.get());
+        tooltipWindow->setAlwaysOnTop(true);
+    }
 
     // ADDED: Create Preset Panel (hidden by default)
     if (audioProcessor.presetManager)
@@ -606,6 +640,8 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
 
 UltimateCompAudioProcessorEditor::~UltimateCompAudioProcessorEditor() {
     stopTimer();
+    // FIXED: Destroy tooltip first to prevent LNF usage after destruction
+    tooltipWindow.reset();
     setLookAndFeel(nullptr);
 }
 
@@ -664,6 +700,12 @@ void UltimateCompAudioProcessorEditor::timerCallback()
     bool fluxOn = (fluxMode == 1);
     updateEnablement(*kFluxAmt, fluxOn);
 
+
+
+    // STUFF Level knob appears only when STUFF is enabled
+    const bool stuffOn = (*audioProcessor.apvts.getRawParameterValue("stuff") > 0.5f);
+    if (kStuffBal && kStuffBal->isVisible() != stuffOn)
+        kStuffBal->setVisible(stuffOn);
     repaint();
 }
 
@@ -706,7 +748,7 @@ void UltimateCompAudioProcessorEditor::paint(juce::Graphics& g)
         g.setColour(lnf->c(UltimateLNF::text));
         g.setFont(juce::FontOptions(22.0f).withStyle("bold"));
         // CHANGED: Fallback text updated
-        g.drawText("NS - bussStuff", 20, 10, 200, 30, juce::Justification::left);
+        g.drawText("bussStuff", 20, 10, 200, 30, juce::Justification::left);
     }
 }
 
@@ -824,69 +866,69 @@ void UltimateCompAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     }
 
 
-// --- DRAW CYAN "SISTER" CONNECTION LINES (always-on) ---
-// NOTE: Drawn in paintOverChildren so they are guaranteed visible above the UI.
-auto centerInEditor = [this](juce::Component* c) -> juce::Point<float>
-{
-    if (c == nullptr) return {};
-    // Convert the component's local centre to this editor's coordinate space (works even if nested in panels).
-    const auto localCentre = c->getLocalBounds().getCentre();
-    const auto global      = c->localPointToGlobal(localCentre);
-    const auto editorLocal = this->getLocalPoint(nullptr, global);
-    return editorLocal.toFloat();
-};
+    // --- DRAW CYAN "SISTER" CONNECTION LINES (always-on) ---
+    // NOTE: Drawn in paintOverChildren so they are guaranteed visible above the UI.
+    auto centerInEditor = [this](juce::Component* c) -> juce::Point<float>
+        {
+            if (c == nullptr) return {};
+            // Convert the component's local centre to this editor's coordinate space (works even if nested in panels).
+            const auto localCentre = c->getLocalBounds().getCentre();
+            const auto global = c->localPointToGlobal(localCentre);
+            const auto editorLocal = this->getLocalPoint(nullptr, global);
+            return editorLocal.toFloat();
+        };
 
-auto approxRadius = [](juce::Component* c) -> float
-{
-    if (c == nullptr) return 0.0f;
-    const auto lb = c->getLocalBounds().toFloat();
-    return 0.5f * std::min(lb.getWidth(), lb.getHeight());
-};
+    auto approxRadius = [](juce::Component* c) -> float
+        {
+            if (c == nullptr) return 0.0f;
+            const auto lb = c->getLocalBounds().toFloat();
+            return 0.5f * std::min(lb.getWidth(), lb.getHeight());
+        };
 
-auto drawSister = [&](juce::Component* a, juce::Component* b)
-{
-    if (a == nullptr || b == nullptr) return;
-    if (!a->isShowing() || !b->isShowing()) return;
+    auto drawSister = [&](juce::Component* a, juce::Component* b)
+        {
+            if (a == nullptr || b == nullptr) return;
+            if (!a->isShowing() || !b->isShowing()) return;
 
-    auto pa = centerInEditor(a);
-    auto pb = centerInEditor(b);
+            auto pa = centerInEditor(a);
+            auto pb = centerInEditor(b);
 
-    auto ra = approxRadius(a);
-    auto rb = approxRadius(b);
+            auto ra = approxRadius(a);
+            auto rb = approxRadius(b);
 
-    auto v = pb - pa;
-    const float len = v.getDistanceFromOrigin();
-    if (len < 1.0f) return;
+            auto v = pb - pa;
+            const float len = v.getDistanceFromOrigin();
+            if (len < 1.0f) return;
 
-    const auto dir = v / len;
+            const auto dir = v / len;
 
-    // Start/end slightly outside the controls so the line is not hidden under knob faces.
-    pa += dir * (ra * 0.75f);
-    pb -= dir * (rb * 0.75f);
+            // Start/end slightly outside the controls so the line is not hidden under knob faces.
+            pa += dir * (ra * 0.75f);
+            pb -= dir * (rb * 0.75f);
 
-    juce::Path path;
-    path.startNewSubPath(pa);
-    path.lineTo(pb);
+            juce::Path path;
+            path.startNewSubPath(pa);
+            path.lineTo(pb);
 
-    // Subtle glow + crisp core so it is unmissable.
-    g.setColour(juce::Colours::cyan.withAlpha(0.25f));
-    g.strokePath(path, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            // Subtle glow + crisp core so it is unmissable.
+            g.setColour(juce::Colours::cyan.withAlpha(0.25f));
+            g.strokePath(path, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    g.setColour(juce::Colours::cyan.withAlpha(0.90f));
-    g.strokePath(path, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour(juce::Colours::cyan.withAlpha(0.90f));
+            g.strokePath(path, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // End-caps
-    g.setColour(juce::Colours::cyan.withAlpha(0.95f));
-    g.fillEllipse(pa.x - 2.5f, pa.y - 2.5f, 5.0f, 5.0f);
-    g.fillEllipse(pb.x - 2.5f, pb.y - 2.5f, 5.0f, 5.0f);
-};
+            // End-caps
+            g.setColour(juce::Colours::cyan.withAlpha(0.95f));
+            g.fillEllipse(pa.x - 2.5f, pa.y - 2.5f, 5.0f, 5.0f);
+            g.fillEllipse(pb.x - 2.5f, pb.y - 2.5f, 5.0f, 5.0f);
+        };
 
-// Amount <-> Frequency pairs (your primary "sister" pattern)
-drawSister(kGirth.get(),  kGirthFreq.get());
-drawSister(kTone.get(),   kToneFreq.get());
-drawSister(kBright.get(), kBrightFreq.get());
+    // Amount <-> Frequency pairs (your primary "sister" pattern)
+    drawSister(kGirth.get(), kGirthFreq.get());
+    drawSister(kTone.get(), kToneFreq.get());
+    drawSister(kBright.get(), kBrightFreq.get());
 
-// Other obvious "paired" controls
+    // Other obvious "paired" controls
 }
 
 void UltimateCompAudioProcessorEditor::resized()
@@ -909,18 +951,61 @@ void UltimateCompAudioProcessorEditor::resized()
 
     auto topBar = r.removeFromTop(si(60.0f));
 
+    // --- 1. Right-Side Buttons ---
     const int helpS = si(24.0f);
-    bHelp.setBounds(topBar.getRight() - helpS, topBar.getY() + si(8.0f), helpS, helpS);
+    const int gap = si(10.0f);
 
-    // ADDED: Resize Preset Button
-    // To the left of the Help button
+    bHelp.setBounds(topBar.getRight() - helpS, topBar.getY() + (topBar.getHeight() - helpS) / 2, helpS, helpS);
+
     const int presetBtnW = si(80.0f);
-    bPresets.setBounds(bHelp.getX() - presetBtnW - si(10), bHelp.getY(), presetBtnW, helpS);
+    bPresets.setBounds(bHelp.getX() - presetBtnW - gap, bHelp.getY(), presetBtnW, helpS);
 
-    const int meterH = si(24.0f); const int meterGap = si(6.0f);
-    const int metersTotalWidth = juce::jmin(topBar.getWidth(), si(300.0f));
-    auto centerMeters = topBar.withWidth(metersTotalWidth).withX((getWidth() - metersTotalWidth) / 2);
-    inMeterArea = centerMeters.removeFromTop(meterH); centerMeters.removeFromTop(meterGap); outMeterArea = centerMeters.removeFromTop(meterH);
+    const int mojoBtnW = si(60.0f);
+    bMojo.setBounds(bPresets.getX() - mojoBtnW - gap, bHelp.getY(), mojoBtnW, helpS);
+
+    // Stuff Level Knob (Conditional)
+    const int stuffBalS = si(46.0f);
+    if (kStuffBal)
+    {
+        // Position to left of Stuff button, vertically centered
+        kStuffBal->setBounds(bMojo.getX() - stuffBalS - si(15), topBar.getCentreY() - stuffBalS / 2, stuffBalS, stuffBalS);
+    }
+
+    // --- 2. Center Block (Meters + Global I/O) ---
+    // Calculate available space between Logo area (left) and Buttons (right)
+    int rightLimit = (kStuffBal && kStuffBal->isVisible()) ? kStuffBal->getX() : bMojo.getX();
+    int leftLimit = si(230); // Approximate end of Logo text
+    int availableW = rightLimit - leftLimit;
+
+    // Dimensions
+    const int ioKnobS = si(50.0f);
+    const int metersW = si(260.0f);
+    const int meterH = si(22.0f);
+    const int meterGap = si(4.0f);
+
+    const int centerBlockW = ioKnobS + gap + ioKnobS + si(20) + metersW;
+
+    // Center the block in available space
+    int blockX = leftLimit + (availableW - centerBlockW) / 2;
+    // Safety clamp to ensure we don't overlap logo
+    blockX = juce::jmax(blockX, leftLimit);
+
+    // Position Global IN Knob
+    if (kInGain)
+        kInGain->setBounds(blockX, topBar.getCentreY() - ioKnobS / 2, ioKnobS, ioKnobS);
+
+    // Position Global OUT Knob
+    if (kOutGain)
+        kOutGain->setBounds(blockX + ioKnobS + gap, topBar.getCentreY() - ioKnobS / 2, ioKnobS, ioKnobS);
+
+    // Position Meters (to the right of knobs)
+    int metersX = blockX + ioKnobS + gap + ioKnobS + si(20);
+    int totalMeterH = meterH * 2 + meterGap;
+    int metersY = topBar.getCentreY() - totalMeterH / 2;
+
+    inMeterArea = juce::Rectangle<int>(metersX, metersY, metersW, meterH);
+    outMeterArea = juce::Rectangle<int>(metersX, metersY + meterH + meterGap, metersW, meterH);
+
 
     const int rowH = r.getHeight() / 3;
     auto row1 = r.removeFromTop(rowH); auto row2 = r.removeFromTop(rowH); auto row3 = r;

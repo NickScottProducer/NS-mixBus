@@ -35,6 +35,7 @@ private:
     // ADDED: Preset Panel & Button
     std::unique_ptr<PresetPanel> presetPanel;
     juce::TextButton bPresets;
+    juce::TextButton bMojo;
 
     // Mirroring State Tracking
     float lastCompInputVal = 0.0f;
@@ -57,6 +58,8 @@ private:
     // Controls
     std::unique_ptr<Knob> kThresh, kRatio, kKnee, kAttack, kRelease, kMakeup, kMix;
     std::unique_ptr<Knob> kCompInput;
+    std::unique_ptr<Knob> kInGain, kOutGain;
+    std::unique_ptr<Knob> kStuffBal;
     std::unique_ptr<Knob> kScHpf, kScLpf, kDetRms, kStereoLink, kMsBalance, kFbBlend, kScLevel;
     std::unique_ptr<Knob> kScTdAmt, kScTdMs;
     std::unique_ptr<Knob> kCrestTarget, kCrestSpeed;
@@ -95,6 +98,7 @@ private:
 
     std::unique_ptr<SliderAttachment> aThresh, aRatio, aKnee, aAttack, aRelease, aMakeup, aMix;
     std::unique_ptr<SliderAttachment> aCompInput;
+    std::unique_ptr<SliderAttachment> aInGain, aOutGain, aStuffBal;
     std::unique_ptr<SliderAttachment> aScHpf, aScLpf, aDetRms, aStereoLink, aMsBalance, aFbBlend, aScLevel;
     std::unique_ptr<SliderAttachment> aScTdAmt, aScTdMs;
     std::unique_ptr<SliderAttachment> aCrestTarget, aCrestSpeed;
@@ -117,6 +121,7 @@ private:
 
     std::unique_ptr<ButtonAttachment> aActiveDyn, aActiveDet, aActiveCrest, aActiveTpFlux, aActiveEq, aActiveSat;
     std::unique_ptr<ButtonAttachment> aHelp;
+    std::unique_ptr<ButtonAttachment> aMojo;
 
     void initCombo(juce::ComboBox& box, std::unique_ptr<ComboBoxAttachment>& attachment, const juce::String& paramID, const juce::String& tooltip);
     void bindKnob(Knob& knob, std::unique_ptr<SliderAttachment>& attachment, const juce::String& paramID, const juce::String& suffix, const juce::String& tooltip);
