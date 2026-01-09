@@ -468,7 +468,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     bHelp.setTooltip("Tooltips On/Off\nWhen enabled, hover any control to see detailed help.");
     bHelp.onClick = [this] {
         bool show = bHelp.getToggleState();
-        if (show) tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 400);
+        if (show) tooltipWindow = std::make_unique<juce::TooltipWindow>(nullptr, 400);
         else tooltipWindow.reset();
         };
     addAndMakeVisible(bHelp);
@@ -589,7 +589,7 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     aScToComp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sc_to_comp", bScToComp);
     aHelp = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "show_help", bHelp);
 
-    if (bHelp.getToggleState()) tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 400);
+    if (bHelp.getToggleState()) tooltipWindow = std::make_unique<juce::TooltipWindow>(nullptr, 400);
 
     // ADDED: Create Preset Panel (hidden by default)
     if (audioProcessor.presetManager)

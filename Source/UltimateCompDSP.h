@@ -288,7 +288,12 @@ steel_phi_l = steel_phi_r = 0.0;
         if (os_dry) os_dry->reset();
 
         satInternalDelay.reset();
-armTopologyFade();
+
+        // Reset detector-conditioning state on SC-related topology changes.
+        if ((audition != prevTopoAudition) || (msMode != prevTopoMsMode) || (scMode != prevTopoScMode) || (scToComp != prevTopoScToComp))
+            resetDetectorConditioningState();
+
+        armTopologyFade();
 
         prevTopoSatEq = satEq;
         prevTopoAudition = audition;
@@ -609,6 +614,21 @@ private:
         s_r = midP - sideP;
     }
 
+    // Resets detector-conditioning states (sidechain biquads + TD envelopes).
+    // Called on topology-affecting changes (M/S mode, SC routing/source, audition) so we never
+    // carry "stuck" IIR/ENV state across radically different detector configurations.
+    void resetDetectorConditioningState() noexcept
+    {
+        sc_hp_l.resetState();   sc_hp_r.resetState();
+        sc_hp_l_2.resetState(); sc_hp_r_2.resetState();
+        sc_lp_l.resetState();   sc_lp_r.resetState();
+        sc_lp_l_2.resetState(); sc_lp_r_2.resetState();
+        sc_shelf_l.resetState(); sc_shelf_r.resetState();
+
+        sc_td_fast_mid = sc_td_slow_mid = 0.0;
+        sc_td_fast_side = sc_td_slow_side = 0.0;
+    }
+
     void processCompressorBlock(juce::AudioBuffer<float>& io)
     {
         const int nSamp = io.getNumSamples();
@@ -647,8 +667,6 @@ private:
             comp_in_sm = smooth1p(comp_in_sm, comp_in_target, smooth_alpha);
             makeup_lin_sm = smooth1p(makeup_lin_sm, makeup_lin_target, smooth_alpha);
             sc_level_sm = smooth1p(sc_level_sm, sc_level_target, smooth_alpha);
-            sc_td_amt_sm = smooth1p(sc_td_amt_sm, sc_td_amt_target, smooth_alpha);
-            sc_td_ms_sm = smooth1p(sc_td_ms_sm, sc_td_ms_target, smooth_alpha);
             sc_td_amt_sm = smooth1p(sc_td_amt_sm, sc_td_amt_target, smooth_alpha);
             sc_td_ms_sm = smooth1p(sc_td_ms_sm, sc_td_ms_target, smooth_alpha);
             ms_bal_sm = smooth1p(ms_bal_sm, ms_bal_target, smooth_alpha);
@@ -692,7 +710,9 @@ private:
             }
 
             // Sidechain transient designer (post filters)
-            applySidechainTransientDesigner(s_l, s_r);
+            // Only meaningful when the sidechain is actually driving the detector and detector tools are enabled.
+            if (p_sc_to_comp && p_active_det)
+                applySidechainTransientDesigner(s_l, s_r);
 
             // --- 3. DETECTOR ---
             double det_in_l = s_l;
@@ -841,7 +861,8 @@ private:
                 }
 
                 // Sidechain transient designer (post filters)
-                applySidechainTransientDesigner(s_l, s_r);
+                if (p_active_det)
+                    applySidechainTransientDesigner(s_l, s_r);
 
             }
 
