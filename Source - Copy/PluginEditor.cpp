@@ -385,10 +385,6 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     kStuffBal->setUnitSuffix("dB");
     kStuffBal->setVisible(false);
 
-    kStuffThresh = makeKnob("Thresh", *lnf);
-    kStuffThresh->setUnitSuffix("dB");
-    kStuffThresh->setVisible(false);
-
 
     kScHpf = makeKnob("Low Cut", *lnf); kScHpf->setUnitSuffix("Hz");
     kScLpf = makeKnob("High Cut", *lnf); kScLpf->setUnitSuffix("Hz");
@@ -505,7 +501,6 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     addAndMakeVisible(*kInGain);
     addAndMakeVisible(*kOutGain);
     addAndMakeVisible(*kStuffBal);
-    addAndMakeVisible(*kStuffThresh);
 
     // --- 3. Panels ---
     panelDyn = std::make_unique<Panel>("Main Dynamics", *lnf);
@@ -570,7 +565,6 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     bindKnob(*kInGain, aInGain, "in_gain", "dB", "Global Input Gain\nPre everything. Use to drive the processor harder without changing the compressor's internal Input knob.");
     bindKnob(*kOutGain, aOutGain, "out_trim", "dB", "Global Output Gain\nPost everything. Final output trim feeding the OUT meter.");
     bindKnob(*kStuffBal, aStuffBal, "stuff_bal", "dB", "Stuff Level\nAdjusts the output volume of the parallel Stuff signal.");
-    bindKnob(*kStuffThresh, aStuffThresh, "stuff_thresh", "dB", "Stuff Threshold\nControls how hard the Stuff compressor clamps. Higher (closer to 0 dB) = less smash/less crackle on loud inputs. Lower = more density/juice.");
     bindKnob(*kScHpf, aScHpf, "sc_hp_freq", "Hz", "SC Low Cut\nHigh-pass filter for the detector. Raise to reduce low-end pumping (detection only).");
     bindKnob(*kScLpf, aScLpf, "sc_lp_freq", "Hz", "SC High Cut\nLow-pass filter for the detector. Lower to smooth spiky triggering (detection only).");
     bindKnob(*kDetRms, aDetRms, "det_rms", "ms", "Detector RMS Window\nAveraging time for RMS detection. Higher = smoother; lower = peakier/transient-driven.");
@@ -712,8 +706,6 @@ void UltimateCompAudioProcessorEditor::timerCallback()
     const bool stuffOn = (*audioProcessor.apvts.getRawParameterValue("stuff") > 0.5f);
     if (kStuffBal && kStuffBal->isVisible() != stuffOn)
         kStuffBal->setVisible(stuffOn);
-    if (kStuffThresh && kStuffThresh->isVisible() != stuffOn)
-        kStuffThresh->setVisible(stuffOn);
     repaint();
 }
 
@@ -971,26 +963,17 @@ void UltimateCompAudioProcessorEditor::resized()
     const int mojoBtnW = si(60.0f);
     bMojo.setBounds(bPresets.getX() - mojoBtnW - gap, bHelp.getY(), mojoBtnW, helpS);
 
-    // Stuff Knobs (Conditional)
-    const int stuffKnobS = si(46.0f);
-    const int stuffKnobGap = si(10);
+    // Stuff Level Knob (Conditional)
+    const int stuffBalS = si(46.0f);
     if (kStuffBal)
     {
-        // Level: closest to STUFF button
-        kStuffBal->setBounds(bMojo.getX() - stuffKnobS - si(15), topBar.getCentreY() - stuffKnobS / 2, stuffKnobS, stuffKnobS);
-    }
-    if (kStuffThresh)
-    {
-        // Threshold: immediately to the left of Level
-        const int x = (kStuffBal ? kStuffBal->getX() : bMojo.getX()) - stuffKnobS - stuffKnobGap;
-        kStuffThresh->setBounds(x, topBar.getCentreY() - stuffKnobS / 2, stuffKnobS, stuffKnobS);
+        // Position to left of Stuff button, vertically centered
+        kStuffBal->setBounds(bMojo.getX() - stuffBalS - si(15), topBar.getCentreY() - stuffBalS / 2, stuffBalS, stuffBalS);
     }
 
     // --- 2. Center Block (Meters + Global I/O) ---
     // Calculate available space between Logo area (left) and Buttons (right)
-    int rightLimit = bMojo.getX();
-    if (kStuffBal && kStuffBal->isVisible()) rightLimit = juce::jmin(rightLimit, kStuffBal->getX());
-    if (kStuffThresh && kStuffThresh->isVisible()) rightLimit = juce::jmin(rightLimit, kStuffThresh->getX());
+    int rightLimit = (kStuffBal && kStuffBal->isVisible()) ? kStuffBal->getX() : bMojo.getX();
     int leftLimit = si(230); // Approximate end of Logo text
     int availableW = rightLimit - leftLimit;
 

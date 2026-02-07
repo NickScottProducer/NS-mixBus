@@ -166,7 +166,6 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     // Mojo
     dsp.p_mojo = (*apvts.getRawParameterValue("stuff") > 0.5f);
     dsp.p_mojo_balance = *apvts.getRawParameterValue("stuff_bal");
-    dsp.p_mojo_thresh_db = *apvts.getRawParameterValue("stuff_thresh");
 
     // Color EQ: Pultec-style low-end
     dsp.p_girth = *apvts.getRawParameterValue("girth");
@@ -338,8 +337,6 @@ layout.add(std::make_unique<juce::AudioParameterFloat>("out_trim", "Output Trim"
 
     layout.add(std::make_unique<juce::AudioParameterBool>("stuff", "Stuff", false));
     layout.add(std::make_unique<juce::AudioParameterFloat>("stuff_bal", "Stuff Level", -36.0f, 24.0f, 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("stuff_thresh", "Stuff Threshold",
-        juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -38.0f));
 
 
     layout.add(std::make_unique<juce::AudioParameterFloat>("girth", "Girth", 0.0f, 12.0f, 0.0f));

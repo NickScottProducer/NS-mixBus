@@ -48,7 +48,6 @@ public:
     bool p_mojo = false;
     float p_mojo_mix = 50.0f; // Mojo Mix %
     float p_mojo_balance = 0.0f; // NOW ACTS AS LEVEL (dB)
-    float p_mojo_thresh_db = -38.0f; // Stuff Threshold (dB)
 
     // --- SIDECHAIN EXPERT ---
     int  p_sc_input_mode = 0; // 0 = Internal, 1 = External
@@ -165,10 +164,12 @@ public:
         // Mojo parallel buffer
         mojo_buf.setSize(2, max_block, false, false, true);
 
-        // Mojo internal oversampling intentionally disabled for parallel-phase coherence.
-        // Anti-aliasing for Stuff is handled by ADAA waveshaping (no OS latency mismatch in parallel sums).
+        // Mojo/STUFF: anti-aliasing is handled by ADAA (tanhADAA1_u) to keep this PARALLEL path phase-coherent.
+// Internal oversampling is intentionally DISABLED here to avoid comb-filtering when Mojo is mixed with the main signal.
         mojo_os_stages = 0;
         mojo_os_factor = 1;
+        mojo_drive_buf.resize((size_t)max_block);
+
         mojo_os.reset();
 
         os = std::make_unique<juce::dsp::Oversampling<float>>(
@@ -235,6 +236,8 @@ public:
         mojo_prev_on = false;
         mojo_scale_sm = 1.0;
         mojo_env = 0.0;
+        mojo_prev_u_sym_l = mojo_prev_u_sym_r = 0.0;
+        mojo_prev_u_asym_l = mojo_prev_u_asym_r = 0.0;
         mojo_mix_sm = 0.5;
 
         mojo_dc_x1_l = mojo_dc_y1_l = 0.0;
@@ -622,7 +625,9 @@ public:
 
         // MOJO PARAMETERS (Fixed "Analog" Curve)
         // FIXED: Use the correct effective rate depending on Mojo Oversampling status
-        double mojoRate = s_rate; // Parallel-safe: Stuff runs at base rate (ADAA handles anti-aliasing)
+        double mojoRate = s_rate;
+        if (mojo_os && mojo_os_stages > 0)
+            mojoRate = s_rate * (double)mojo_os_factor;
 
         mojo_hp_l.update_hpf(20.0, 0.707, mojoRate);
         mojo_hp_r.update_hpf(20.0, 0.707, mojoRate);
@@ -645,8 +650,9 @@ public:
             mojo_lp_l.reset(); mojo_lp_r.reset();
 
             mojo_env = 0.0;
+            mojo_prev_u_sym_l = mojo_prev_u_sym_r = 0.0;
+            mojo_prev_u_asym_l = mojo_prev_u_asym_r = 0.0;
             mojo_scale_sm = 0.0;
-            mojo_thresh_sm = (double)p_mojo_thresh_db;
             mojo_dc_x1_l = mojo_dc_y1_l = 0.0;
             mojo_dc_x1_r = mojo_dc_y1_r = 0.0;
         }
@@ -655,7 +661,6 @@ public:
         const double mojo_target = p_mojo ? 1.0 : 0.0;
         mojo_on_sm = smooth1p(mojo_on_sm, mojo_target, smooth_alpha_block);
         mojo_mix_target = juce::jlimit(0.0, 1.0, (double)p_mojo_mix / 100.0);
-        mojo_thresh_sm = smooth1p(mojo_thresh_sm, (double)p_mojo_thresh_db, smooth_alpha_block);
 
         if (os_srate > 0.0) {
             steel_dt = 1.0 / os_srate;
@@ -689,6 +694,29 @@ private:
     static inline double dbToLin(double db) { return std::pow(10.0, db / 20.0); }
     static inline double linToDb(double lin) { return 20.0 * std::log10(std::max(lin, 1.0e-20)); }
     static inline double smooth1p(double current, double target, double alpha) { return current + (target - current) * (1.0 - alpha); }
+
+
+    static inline double logCoshStable(double x) noexcept
+    {
+        const double ax = std::abs(x);
+        // log(cosh(x)) = |x| + log1p(exp(-2|x|)) - log(2)
+        return ax + std::log1p(std::exp(-2.0 * ax)) - std::log(2.0);
+    }
+
+    // 1st-order ADAA in the "u" domain where the shaper is tanh(u).
+    // This substantially reduces aliasing for high-frequency content without needing extreme oversampling.
+    static inline double tanhADAA1_u(double u, double& u1) noexcept
+    {
+        const double du = u - u1;
+        double y;
+        if (std::abs(du) > 1.0e-9)
+            y = (logCoshStable(u) - logCoshStable(u1)) / du;
+        else
+            y = std::tanh(0.5 * (u + u1));
+        u1 = u;
+        return y;
+    }
+
 
     inline double scTdProcessSample(double x, double& fastEnv, double& slowEnv, double amt) noexcept
     {
@@ -761,8 +789,7 @@ private:
         // ------------------------------------------------------------------
         // "Rear-bus" parallel mojo chain: pre-shape -> smash comp -> gnarl
         // ------------------------------------------------------------------
-        const double THRESH_DB = (double)mojo_thresh_sm; // user-controlled
-        const double THRESH_DB_DEFAULT = -38.0;
+        const double THRESH_DB = -38.0;
         const double RATIO = 20.0;
         const double ATTACK_MS = 1.5;
         const double RELEASE_MS = 90.0;
@@ -773,11 +800,6 @@ private:
 
         const double eps = 1e-12;
         const double underlayGain = dbToLin(UNDERLAY_DB);
-        // "Juice" behavior: lowering threshold drives the chain harder while trimming output.
-        // Only applies when THRESH_DB is LOWER than the default (more negative).
-        const double extraJuiceDb = juce::jlimit(0.0, 24.0, THRESH_DB_DEFAULT - THRESH_DB);
-        const double mojoPreJuice  = dbToLin(extraJuiceDb * 0.50);
-        const double mojoPostJuice = dbToLin(-extraJuiceDb * 0.50);
         const bool useMojoOS = (mojo_os && mojo_os_stages > 0 && mojo_os_factor > 1);
 
         // Determine effective sample rate for envelopes
@@ -794,8 +816,8 @@ private:
         {
             for (int i = 0; i < nSamp; ++i)
             {
-                double sL = (double)xL[i] * mojoPreJuice;
-                double sR = (double)xR[i] * mojoPreJuice;
+                double sL = (double)xL[i];
+                double sR = (double)xR[i];
 
                 // Filters
                 sL = mojo_hp_l.process(sL); sR = mojo_hp_r.process(sR);
@@ -826,11 +848,11 @@ private:
                 // Nonlinearity
                 const double drive = BASE_DRIVE * (1.0 + 0.35 * juce::jlimit(0.0, 2.0, trans - 1.0));
 
-                const double symL = std::tanh(sL * drive);
-                const double symR = std::tanh(sR * drive);
+                const double symL = tanhADAA1_u(sL * drive, mojo_prev_u_sym_l);
+                const double symR = tanhADAA1_u(sR * drive, mojo_prev_u_sym_r);
                 const double biasTerm = std::tanh(BIAS * drive);
-                const double asymL = std::tanh((sL + BIAS) * drive) - biasTerm;
-                const double asymR = std::tanh((sR + BIAS) * drive) - biasTerm;
+                const double asymL = tanhADAA1_u((sL + BIAS) * drive, mojo_prev_u_asym_l) - biasTerm;
+                const double asymR = tanhADAA1_u((sR + BIAS) * drive, mojo_prev_u_asym_r) - biasTerm;
 
                 sL = (1.0 - ASYM_MIX) * symL + ASYM_MIX * asymL;
                 sR = (1.0 - ASYM_MIX) * symR + ASYM_MIX * asymR;
@@ -838,7 +860,6 @@ private:
                 // Post
                 sL = mojo_lp_l.process(sL); sR = mojo_lp_r.process(sR);
                 sL *= underlayGain; sR *= underlayGain;
-                sL *= mojoPostJuice; sR *= mojoPostJuice;
 
                 // DC Block
                 double yL = sL - mojo_dc_x1_l + 0.995 * mojo_dc_y1_l;
@@ -868,8 +889,8 @@ private:
         // 2) Run the entire Mojo logic at the High Sample Rate
         for (int j = 0; j < osN; ++j)
         {
-            double sL = (double)dL[j] * mojoPreJuice;
-            double sR = (double)dR[j] * mojoPreJuice;
+            double sL = (double)dL[j];
+            double sR = (double)dR[j];
 
             // Filters (coeffs updated for os_rate in updateParameters)
             sL = mojo_hp_l.process(sL); sR = mojo_hp_r.process(sR);
@@ -900,12 +921,12 @@ private:
             // Nonlinearity
             const double drive = BASE_DRIVE * (1.0 + 0.35 * juce::jlimit(0.0, 2.0, trans - 1.0));
 
-            const double symL = std::tanh(sL * drive);
-            const double symR = std::tanh(sR * drive);
+            const double symL = tanhADAA1_u(sL * drive, mojo_prev_u_sym_l);
+            const double symR = tanhADAA1_u(sR * drive, mojo_prev_u_sym_r);
 
             const double biasTerm = std::tanh(BIAS * drive);
-            const double asymL = std::tanh((sL + BIAS) * drive) - biasTerm;
-            const double asymR = std::tanh((sR + BIAS) * drive) - biasTerm;
+            const double asymL = tanhADAA1_u((sL + BIAS) * drive, mojo_prev_u_asym_l) - biasTerm;
+            const double asymR = tanhADAA1_u((sR + BIAS) * drive, mojo_prev_u_asym_r) - biasTerm;
 
             sL = (1.0 - ASYM_MIX) * symL + ASYM_MIX * asymL;
             sR = (1.0 - ASYM_MIX) * symR + ASYM_MIX * asymR;
@@ -1760,8 +1781,9 @@ private:
     double mojo_mix_sm = 0.5; // Smooth variable blend
     double mojo_mix_target = 0.5;
     double mojo_env = 0.0;
+    double mojo_prev_u_sym_l = 0.0, mojo_prev_u_sym_r = 0.0;
+    double mojo_prev_u_asym_l = 0.0, mojo_prev_u_asym_r = 0.0;
     double mojo_level_sm = 1.0;
-    double mojo_thresh_sm = -38.0;
 
     SimpleBiquad mojo_hp_l, mojo_hp_r;
     SimpleBiquad mojo_low_shelf_l, mojo_low_shelf_r;
