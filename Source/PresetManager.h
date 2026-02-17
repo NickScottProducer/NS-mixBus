@@ -31,15 +31,23 @@ public:
 
     void savePreset(const juce::String& presetName)
     {
-        const auto xml = valueTreeState.copyState().createXml();
-        const auto file = defaultDirectory.getChildFile(presetName + PRESET_EXTENSION);
+        // FIX B: Sanitize name to prevent path traversal
+        const juce::String safeName = sanitizePresetPath(presetName);
+        if (safeName.isEmpty()) return;
 
-        // FIX: Create parent directory explicitly for nested preset saves
+        const auto xml = valueTreeState.copyState().createXml();
+        const auto file = defaultDirectory.getChildFile(safeName + PRESET_EXTENSION);
+
+        // Create parent directory explicitly for nested preset saves
         file.getParentDirectory().createDirectory();
 
         if (!xml->writeTo(file))
         {
             DBG("Could not write preset to file: " + file.getFullPathName());
+        }
+        else
+        {
+            currentPresetName = safeName;
         }
     }
 
@@ -47,7 +55,11 @@ public:
     {
         const auto file = defaultDirectory.getChildFile(presetName + PRESET_EXTENSION);
         if (file.exists())
+        {
             file.deleteFile();
+            if (currentPresetName == presetName)
+                currentPresetName = "<No Preset>";
+        }
     }
 
     void loadPreset(const juce::String& presetName)
@@ -59,17 +71,14 @@ public:
             if (xml != nullptr && xml->hasTagName(valueTreeState.state.getType()))
             {
                 valueTreeState.replaceState(juce::ValueTree::fromXml(*xml));
+                currentPresetName = presetName; // Track currently loaded
             }
         }
     }
 
-    int getLoadPresetIndex() const { return currentPresetIndex; }
-
     juce::String getCurrentPresetName() const
     {
-        if (currentPresetIndex < 0 || currentPresetIndex >= allPresets.size())
-            return "<No Preset>";
-        return allPresets[currentPresetIndex];
+        return currentPresetName;
     }
 
     // Returns a list of all presets (names only, no extension)
@@ -95,5 +104,16 @@ private:
     juce::AudioProcessorValueTreeState& valueTreeState;
     juce::File defaultDirectory;
     juce::StringArray allPresets;
-    int currentPresetIndex = -1;
+
+    // FIX B: Real state tracking
+    juce::String currentPresetName = "<No Preset>";
+
+    // FIX B: Sanitization to prevent illegal chars and directory jumping
+    juce::String sanitizePresetPath(juce::String name)
+    {
+        while (name.contains(".."))
+            name = name.replace("..", "");
+
+        return name.retainCharacters("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ./\\");
+    }
 };

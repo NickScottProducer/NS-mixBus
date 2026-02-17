@@ -34,7 +34,6 @@ public:
     // --- GLOBAL ---
     int   p_signal_flow = 0; // 0 = Comp > Sat, 1 = Sat > Comp
     float p_global_in = 0.0f;  // Global Input Gain (dB)
-    float p_global_out = 0.0f; // Global Output Gain (dB)
 
     // --- MODULE BYPASS STATES ---
     bool p_active_dyn = true;
@@ -176,6 +175,10 @@ public:
         dryDelayLine.reset();
         wetDelayLine.reset();
 
+        // FIX: Set Delay Line limits ONCE, cleanly
+        dryDelayLine.setDelay((float)os_latency_samples);
+        wetDelayLine.setDelay((float)os_latency_samples);
+
         rms_window_max = juce::jmax(1, (int)std::ceil(0.300 * s_rate));
         rms_ring_l.assign((size_t)rms_window_max, 0.0);
         rms_ring_r.assign((size_t)rms_window_max, 0.0);
@@ -233,7 +236,6 @@ public:
         ms_bal_sm = 1.0;
 
         global_in_sm = 1.0;
-        global_out_sm = 1.0;
 
         sc_td_amt_sm = 0.0;
         sc_td_ms_sm = 0.0;
@@ -275,6 +277,8 @@ public:
         prevTopoMsMode = p_ms_mode;
         prevTopoScMode = p_sc_input_mode;
         prevTopoScToComp = p_sc_to_comp;
+
+        c_s_rate = -1.0; // Force param cache reload
     }
 
     void armTopologyFade() noexcept
@@ -305,10 +309,10 @@ public:
         if (!changed) return;
 
         if (os) os->reset();
-
         satInternalDelay.reset();
-        dryDelayLine.reset();
-        wetDelayLine.reset();
+
+        // FIX A: Removed dryDelayLine and wetDelayLine .reset() and .setDelay() calls 
+        // to prevent click/hole artifacts. They act as continuous compensators.
 
         if ((audition != prevTopoAudition) || (msMode != prevTopoMsMode) || (scMode != prevTopoScMode) || (scToComp != prevTopoScToComp))
             resetDetectorConditioningState();
@@ -343,10 +347,9 @@ public:
             updateParameters();
 
             global_in_sm = smooth1p(global_in_sm, global_in_target, smooth_alpha_block);
-            global_out_sm = smooth1p(global_out_sm, global_out_target, smooth_alpha_block);
             mojo_mix_sm = smooth1p(mojo_mix_sm, mojo_mix_target, smooth_alpha_block);
 
-            // RAW POINTER ITERATION FOR AUDIO THREAD SAFETY (NO setSize OR setSample)
+            // RAW POINTER ITERATION FOR AUDIO THREAD SAFETY
             const float* inL = buffer.getReadPointer(0) + offset;
             const float* inR = (buffer.getNumChannels() > 1) ? (buffer.getReadPointer(1) + offset) : inL;
 
@@ -366,17 +369,26 @@ public:
                 wR[i] = r;
             }
 
-            if (p_sc_input_mode == 1 && sidechainBuffer != nullptr && sidechainBuffer->getNumChannels() > 0)
+            // FIX: Protective sidechain bounds clamp
+            int sc_samples_available = sidechainBuffer ? sidechainBuffer->getNumSamples() : 0;
+            if (p_sc_input_mode == 1 && sidechainBuffer != nullptr && sidechainBuffer->getNumChannels() > 0 && sc_samples_available > 0)
             {
-                const float* scL = sidechainBuffer->getReadPointer(0) + offset;
-                const float* scR = (sidechainBuffer->getNumChannels() > 1) ? (sidechainBuffer->getReadPointer(1) + offset) : scL;
+                const float* scL = sidechainBuffer->getReadPointer(0);
+                const float* scR = (sidechainBuffer->getNumChannels() > 1) ? sidechainBuffer->getReadPointer(1) : scL;
 
                 float* sciL = sc_internal_buf.getWritePointer(0);
                 float* sciR = sc_internal_buf.getWritePointer(1);
 
                 for (int i = 0; i < nSamp; ++i) {
-                    sciL[i] = scL[i];
-                    sciR[i] = scR[i];
+                    int readIdx = offset + i;
+                    if (readIdx < sc_samples_available) {
+                        sciL[i] = scL[readIdx];
+                        sciR[i] = scR[readIdx];
+                    }
+                    else {
+                        sciL[i] = 0.0f;
+                        sciR[i] = 0.0f;
+                    }
                 }
             }
             else
@@ -405,13 +417,13 @@ public:
             {
                 if (p_signal_flow == 1)
                 {
-                    processSaturationBlock(wet_buf);
+                    processSaturationBlock(wet_buf, nSamp);
                     processCompressorBlock(wet_buf);
                 }
                 else
                 {
                     processCompressorBlock(wet_buf);
-                    processSaturationBlock(wet_buf);
+                    processSaturationBlock(wet_buf, nSamp);
                 }
             }
 
@@ -420,14 +432,12 @@ public:
             {
                 auto dryBlock = juce::dsp::AudioBlock<float>(dry_buf).getSubBlock(0, (size_t)nSamp);
                 juce::dsp::ProcessContextReplacing<float> dryCtx(dryBlock);
-                dryDelayLine.setDelay((float)os_latency_samples);
                 dryDelayLine.process(dryCtx);
 
                 if (!(p_active_sat && os))
                 {
                     auto wetBlock = juce::dsp::AudioBlock<float>(wet_buf).getSubBlock(0, (size_t)nSamp);
                     juce::dsp::ProcessContextReplacing<float> wetCtx(wetBlock);
-                    wetDelayLine.setDelay((float)os_latency_samples);
                     wetDelayLine.process(wetCtx);
                 }
             }
@@ -443,7 +453,6 @@ public:
             const double final_gain_target = dbToLin((double)p_out_trim);
             out_lin_sm = smooth1p(out_lin_sm, final_gain_target, smooth_alpha_block);
             const float finalGain = (float)out_lin_sm;
-            const float gOut = (float)global_out_sm;
 
             float* outL = buffer.getWritePointer(0) + offset;
             float* outR = (buffer.getNumChannels() > 1) ? (buffer.getWritePointer(1) + offset) : nullptr;
@@ -477,9 +486,9 @@ public:
                     sigR += mojoR[i] * mojoMix * mojoGain;
                 }
 
-                outL[i] = sigL * finalGain * gOut;
+                outL[i] = sigL * finalGain;
                 if (outR)
-                    outR[i] = sigR * finalGain * gOut;
+                    outR[i] = sigR * finalGain;
             }
 
             offset += nSamp;
@@ -488,55 +497,117 @@ public:
 
     void updateParameters()
     {
-        const double attMul = (p_turbo_att ? 0.1 : 1.0);
-        const double relMul = (p_turbo_rel ? 0.1 : 1.0);
-        const double att_ms = std::max(0.05, (double)p_att_ms * attMul);
-        const double rel_ms = std::max(1.0, (double)p_rel_ms * relMul);
+        // FIX: CPU-saving parameter cache checks
+        bool force = false;
 
-        att_coeff = std::exp(-1000.0 / (att_ms * s_rate));
-        rel_coeff_manual = std::exp(-1000.0 / (rel_ms * s_rate));
-        auto_rel_slow = std::exp(-1000.0 / (1200.0 * s_rate));
-        auto_rel_fast = std::exp(-1000.0 / (80.0 * s_rate));
+        if (s_rate != c_s_rate) {
+            c_s_rate = s_rate;
+            force = true;
 
-        use_rms = (p_det_rms > 0.0f);
-        if (use_rms) {
-            const double win_ms = std::max(1.0, (double)p_det_rms);
-            const int desired = std::max(1, (int)std::round((win_ms * 0.001) * s_rate));
-            const int clamped = std::min(desired, rms_window_max);
-            if (clamped != rms_window)
-            {
-                rms_window = clamped;
-                rms_pos = 0;
-                rms_sum_l = rms_sum_r = 0.0;
-                std::fill(rms_ring_l.begin(), rms_ring_l.begin() + (size_t)rms_window, 0.0);
-                std::fill(rms_ring_r.begin(), rms_ring_r.begin() + (size_t)rms_window, 0.0);
+            sc_td_fast_att = std::exp(-1000.0 / (1.0 * s_rate));
+            sc_td_fast_rel = std::exp(-1000.0 / (30.0 * s_rate));
+            sc_td_slow_att = std::exp(-1000.0 / (25.0 * s_rate));
+            sc_td_slow_rel = std::exp(-1000.0 / (250.0 * s_rate));
+
+            smooth_alpha = std::exp(-1.0 / (0.020 * s_rate));
+            os_srate = s_rate * (double)os_factor;
+            smooth_alpha_os = std::exp(-1.0 / (0.020 * os_srate));
+
+            iron_voicing_l.update_shelf(100.0, 1.0, 0.707, s_rate);
+            iron_voicing_r.update_shelf(100.0, 1.0, 0.707, s_rate);
+            steel_low_l.update_shelf(40.0, 1.5, 0.707, s_rate);
+            steel_low_r.update_shelf(40.0, 1.5, 0.707, s_rate);
+            steel_high_l.update_lpf(9000.0, 0.707, s_rate);
+            steel_high_r.update_lpf(9000.0, 0.707, s_rate);
+
+            double mojoRate = s_rate;
+            mojo_hp_l.update_hpf(20.0, 0.707, mojoRate);
+            mojo_hp_r.update_hpf(20.0, 0.707, mojoRate);
+            mojo_low_shelf_l.update_low_shelf(80.0, 2.0, 0.9, mojoRate);
+            mojo_low_shelf_r.update_low_shelf(80.0, 2.0, 0.9, mojoRate);
+            mojo_dip_l.update_peak(320.0, -1.5, 1.5, mojoRate);
+            mojo_dip_r.update_peak(320.0, -1.5, 1.5, mojoRate);
+            mojo_hi_shelf_l.update_shelf(8000.0, 1.5, 0.707, mojoRate);
+            mojo_hi_shelf_r.update_shelf(8000.0, 1.5, 0.707, mojoRate);
+            mojo_lp_l.update_lpf(18000.0, 0.707, s_rate);
+            mojo_lp_r.update_lpf(18000.0, 0.707, s_rate);
+
+            if (os_srate > 0.0) {
+                steel_dt = 1.0 / os_srate;
+                steel_dy_gain = os_srate;
+                const double leak_hz = 6.0;
+                steel_leak_coeff = std::exp(-2.0 * juce::MathConstants<double>::pi * leak_hz / os_srate);
+            }
+        }
+
+        if (force || p_att_ms != c_att_ms || p_turbo_att != c_turbo_att || p_rel_ms != c_rel_ms || p_turbo_rel != c_turbo_rel) {
+            c_att_ms = p_att_ms; c_turbo_att = p_turbo_att; c_rel_ms = p_rel_ms; c_turbo_rel = p_turbo_rel;
+
+            const double attMul = (p_turbo_att ? 0.1 : 1.0);
+            const double relMul = (p_turbo_rel ? 0.1 : 1.0);
+            const double att_ms = std::max(0.05, (double)p_att_ms * attMul);
+            const double rel_ms = std::max(1.0, (double)p_rel_ms * relMul);
+
+            att_coeff = std::exp(-1000.0 / (att_ms * s_rate));
+            rel_coeff_manual = std::exp(-1000.0 / (rel_ms * s_rate));
+            auto_rel_slow = std::exp(-1000.0 / (1200.0 * s_rate));
+            auto_rel_fast = std::exp(-1000.0 / (80.0 * s_rate));
+        }
+
+        if (force || p_det_rms != c_det_rms) {
+            c_det_rms = p_det_rms;
+            use_rms = (p_det_rms > 0.0f);
+            if (use_rms) {
+                const double win_ms = std::max(1.0, (double)p_det_rms);
+                const int desired = std::max(1, (int)std::round((win_ms * 0.001) * s_rate));
+                const int clamped = std::min(desired, rms_window_max);
+                if (clamped != rms_window)
+                {
+                    rms_window = clamped;
+                    rms_pos = 0;
+                    rms_sum_l = rms_sum_r = 0.0;
+                    std::fill(rms_ring_l.begin(), rms_ring_l.begin() + (size_t)rms_window, 0.0);
+                    std::fill(rms_ring_r.begin(), rms_ring_r.begin() + (size_t)rms_window, 0.0);
+                }
             }
         }
 
         stereo_link = juce::jlimit(0.0, 1.0, (double)p_stereo_link / 100.0);
         fb_blend = juce::jlimit(0.0, 1.0, (double)p_fb_blend / 100.0);
 
-        sc_hp_l.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
-        sc_hp_r.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
-        sc_hp_l_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
-        sc_hp_r_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
+        if (force || p_sc_hp_freq != c_sc_hp_freq) {
+            c_sc_hp_freq = p_sc_hp_freq;
+            sc_hp_l.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
+            sc_hp_r.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
+            sc_hp_l_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
+            sc_hp_r_2.update_hpf((double)p_sc_hp_freq, 0.707, s_rate);
+        }
 
-        sc_lp_l.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sc_lp_r.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sc_lp_l_2.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
-        sc_lp_r_2.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
+        if (force || p_sc_lp_freq != c_sc_lp_freq) {
+            c_sc_lp_freq = p_sc_lp_freq;
+            sc_lp_l.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
+            sc_lp_r.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
+            sc_lp_l_2.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
+            sc_lp_r_2.update_lpf(std::max(40.0, (double)p_sc_lp_freq), 0.707, s_rate);
+        }
 
-        thrust_gain_db = 0.0;
-        if (p_thrust_mode == 1) thrust_gain_db = 3.0;
-        if (p_thrust_mode == 2) thrust_gain_db = 6.0;
-        if (p_thrust_mode > 0) {
-            sc_shelf_l.update_shelf(90.0, thrust_gain_db, 0.707, s_rate);
-            sc_shelf_r.update_shelf(90.0, thrust_gain_db, 0.707, s_rate);
+        if (force || p_thrust_mode != c_thrust_mode) {
+            c_thrust_mode = p_thrust_mode;
+            thrust_gain_db = 0.0;
+            if (p_thrust_mode == 1) thrust_gain_db = 3.0;
+            if (p_thrust_mode == 2) thrust_gain_db = 6.0;
+            if (p_thrust_mode > 0) {
+                sc_shelf_l.update_shelf(90.0, thrust_gain_db, 0.707, s_rate);
+                sc_shelf_r.update_shelf(90.0, thrust_gain_db, 0.707, s_rate);
+            }
         }
 
         crest_target_db = (double)p_crest_target;
-        crest_speed_ms = std::max(5.0, (double)p_crest_speed);
-        crest_coeff = std::exp(-1000.0 / (crest_speed_ms * s_rate));
+        if (force || p_crest_speed != c_crest_speed) {
+            c_crest_speed = p_crest_speed;
+            crest_speed_ms = std::max(5.0, (double)p_crest_speed);
+            crest_coeff = std::exp(-1000.0 / (crest_speed_ms * s_rate));
+        }
 
         tp_enabled = (p_tp_mode != 0);
         tp_amt = juce::jlimit(0.0, 1.0, (double)p_tp_amount / 100.0);
@@ -552,19 +623,15 @@ public:
 
         sc_td_amt_target = juce::jlimit(-1.0, 1.0, (double)p_sc_td_amt / 100.0);
         sc_td_ms_target = juce::jlimit(0.0, 1.0, (double)p_sc_td_ms / 100.0);
-        sc_td_fast_att = std::exp(-1000.0 / (1.0 * s_rate));
-        sc_td_fast_rel = std::exp(-1000.0 / (30.0 * s_rate));
-        sc_td_slow_att = std::exp(-1000.0 / (25.0 * s_rate));
-        sc_td_slow_rel = std::exp(-1000.0 / (250.0 * s_rate));
 
-        smooth_alpha = std::exp(-1.0 / (0.020 * s_rate));
-        os_srate = s_rate * (double)os_factor;
-        smooth_alpha_os = std::exp(-1.0 / (0.020 * os_srate));
+        if (force || p_sat_tone != c_sat_tone || p_sat_tone_freq != c_sat_tone_freq) {
+            c_sat_tone = p_sat_tone; c_sat_tone_freq = p_sat_tone_freq;
+            sat_tone_l.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
+            sat_tone_r.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
+        }
 
-        sat_tone_l.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
-        sat_tone_r.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
-
-        {
+        if (force || p_girth != c_girth || p_girth_freq_sel != c_girth_freq_sel) {
+            c_girth = p_girth; c_girth_freq_sel = p_girth_freq_sel;
             const int idx = juce::jlimit(0, 3, p_girth_freq_sel);
             static const double freqs[4] = { 20.0, 30.0, 60.0, 100.0 };
             static const double dips[4] = { 65.0, 97.5, 195.0, 325.0 };
@@ -583,31 +650,14 @@ public:
             girth_dip_r.update_peak(fd, dipDb, dipQ, s_rate);
         }
 
-        const double hb = (double)p_harm_bright;
-        harm_pre_l.update_shelf((double)p_harm_freq, -hb, 0.707, os_srate);
-        harm_pre_r.update_shelf((double)p_harm_freq, -hb, 0.707, os_srate);
-        harm_post_l.update_shelf((double)p_harm_freq, hb, 0.707, os_srate);
-        harm_post_r.update_shelf((double)p_harm_freq, hb, 0.707, os_srate);
-
-        iron_voicing_l.update_shelf(100.0, 1.0, 0.707, s_rate);
-        iron_voicing_r.update_shelf(100.0, 1.0, 0.707, s_rate);
-        steel_low_l.update_shelf(40.0, 1.5, 0.707, s_rate);
-        steel_low_r.update_shelf(40.0, 1.5, 0.707, s_rate);
-        steel_high_l.update_lpf(9000.0, 0.707, s_rate);
-        steel_high_r.update_lpf(9000.0, 0.707, s_rate);
-
-        double mojoRate = s_rate;
-
-        mojo_hp_l.update_hpf(20.0, 0.707, mojoRate);
-        mojo_hp_r.update_hpf(20.0, 0.707, mojoRate);
-        mojo_low_shelf_l.update_low_shelf(80.0, 2.0, 0.9, mojoRate);
-        mojo_low_shelf_r.update_low_shelf(80.0, 2.0, 0.9, mojoRate);
-        mojo_dip_l.update_peak(320.0, -1.5, 1.5, mojoRate);
-        mojo_dip_r.update_peak(320.0, -1.5, 1.5, mojoRate);
-        mojo_hi_shelf_l.update_shelf(8000.0, 1.5, 0.707, mojoRate);
-        mojo_hi_shelf_r.update_shelf(8000.0, 1.5, 0.707, mojoRate);
-        mojo_lp_l.update_lpf(18000.0, 0.707, s_rate);
-        mojo_lp_r.update_lpf(18000.0, 0.707, s_rate);
+        if (force || p_harm_bright != c_harm_bright || p_harm_freq != c_harm_freq) {
+            c_harm_bright = p_harm_bright; c_harm_freq = p_harm_freq;
+            const double hb = (double)p_harm_bright;
+            harm_pre_l.update_shelf((double)p_harm_freq, -hb, 0.707, os_srate);
+            harm_pre_r.update_shelf((double)p_harm_freq, -hb, 0.707, os_srate);
+            harm_post_l.update_shelf((double)p_harm_freq, hb, 0.707, os_srate);
+            harm_post_r.update_shelf((double)p_harm_freq, hb, 0.707, os_srate);
+        }
 
         if (p_mojo && !mojo_prev_on) {
             mojo_hp_l.reset(); mojo_hp_r.reset();
@@ -629,20 +679,12 @@ public:
         mojo_mix_target = juce::jlimit(0.0, 1.0, (double)p_mojo_mix / 100.0);
         mojo_thresh_sm = smooth1p(mojo_thresh_sm, (double)p_mojo_thresh_db, smooth_alpha_block);
 
-        if (os_srate > 0.0) {
-            steel_dt = 1.0 / os_srate;
-            steel_dy_gain = os_srate;
-            const double leak_hz = 6.0;
-            steel_leak_coeff = std::exp(-2.0 * juce::MathConstants<double>::pi * leak_hz / os_srate);
-        }
-
         sat_pre_lin_target = dbToLin((double)p_sat_pre_gain);
         sat_drive_lin_target = dbToLin((double)p_sat_drive);
         sat_mix_target = juce::jlimit(0.0, 1.0, (double)p_sat_mix / 100.0);
         sat_trim_lin = dbToLin((double)p_sat_trim);
 
         global_in_target = dbToLin((double)p_global_in);
-        global_out_target = dbToLin((double)p_global_out);
 
         if (p_sat_mode != last_sat_mode) {
             steel_phi_l = steel_phi_r = 0.0;
@@ -986,8 +1028,8 @@ private:
                 else if (p_ms_mode == 3) side *= lin_gain_mono;
                 else if (p_ms_mode == 4) mid *= lin_gain_mono;
 
-                if (p_ms_mode == 3) { mid *= (1.0 / ms_bal_sm); side *= ms_bal_sm; }
-                else if (p_ms_mode == 4) { mid *= ms_bal_sm; side *= (1.0 / ms_bal_sm); }
+                if (p_ms_mode == 3) { mid *= (1.0 / std::max(1e-6, ms_bal_sm)); side *= ms_bal_sm; }
+                else if (p_ms_mode == 4) { mid *= ms_bal_sm; side *= (1.0 / std::max(1e-6, ms_bal_sm)); }
                 pre_make_l = mid + side;
                 pre_make_r = mid - side;
             }
@@ -1274,22 +1316,18 @@ private:
     }
 
 
-    void processSaturationBlock(juce::AudioBuffer<float>& io)
+    void processSaturationBlock(juce::AudioBuffer<float>& io, int nSamp)
     {
         if (!p_active_sat && !p_active_eq) return;
 
         const int nCh = io.getNumChannels();
-        const int nS = io.getNumSamples();
 
         if (!p_active_sat && p_active_eq)
         {
-            sat_clean_buf.setSize(nCh, nS, false, false, true);
-            sat_proc_buf.setSize(nCh, nS, false, false, true);
-
             for (int ch = 0; ch < nCh; ++ch)
             {
-                sat_clean_buf.copyFrom(ch, 0, io, ch, 0, nS);
-                sat_proc_buf.copyFrom(ch, 0, io, ch, 0, nS);
+                sat_clean_buf.copyFrom(ch, 0, io, ch, 0, nSamp);
+                sat_proc_buf.copyFrom(ch, 0, io, ch, 0, nSamp);
             }
 
             const bool eq_tone_active = (std::abs(p_sat_tone) > 0.01f);
@@ -1302,7 +1340,7 @@ private:
                 auto& gBump = (ch == 0) ? girth_bump_l : girth_bump_r;
                 auto& gDip = (ch == 0) ? girth_dip_l : girth_dip_r;
 
-                for (int i = 0; i < nS; ++i)
+                for (int i = 0; i < nSamp; ++i)
                 {
                     double s = (double)y[i];
                     if (eq_girth_active) { s = gBump.process(s); s = gDip.process(s); }
@@ -1320,7 +1358,7 @@ private:
                 const float* wet = sat_proc_buf.getReadPointer(ch);
                 const float* dry = sat_clean_buf.getReadPointer(ch);
 
-                for (int i = 0; i < nS; ++i)
+                for (int i = 0; i < nSamp; ++i)
                     out[i] = dry[i] + (wet[i] - dry[i]) * satMix01;
             }
 
@@ -1329,21 +1367,17 @@ private:
 
         if (!os) return;
 
-        sat_clean_buf.setSize(nCh, nS, false, false, true);
         for (int ch = 0; ch < nCh; ++ch)
-            sat_clean_buf.copyFrom(ch, 0, io, ch, 0, nS);
+            sat_clean_buf.copyFrom(ch, 0, io, ch, 0, nSamp);
 
         if (p_active_sat) {
-            float latency = os->getLatencyInSamples();
-            satInternalDelay.setDelay(latency);
-            juce::dsp::AudioBlock<float> block(sat_clean_buf);
+            auto block = juce::dsp::AudioBlock<float>(sat_clean_buf).getSubBlock(0, (size_t)nSamp);
             juce::dsp::ProcessContextReplacing<float> context(block);
             satInternalDelay.process(context);
         }
 
-        sat_proc_buf.setSize(nCh, nS, false, false, true);
         for (int ch = 0; ch < nCh; ++ch)
-            sat_proc_buf.copyFrom(ch, 0, io, ch, 0, nS);
+            sat_proc_buf.copyFrom(ch, 0, io, ch, 0, nSamp);
 
         sat_pre_lin_sm = smooth1p(sat_pre_lin_sm, sat_pre_lin_target, smooth_alpha_block);
         sat_drive_lin_sm = smooth1p(sat_drive_lin_sm, sat_drive_lin_target, smooth_alpha_block);
@@ -1352,12 +1386,13 @@ private:
         if (p_active_sat) {
             for (int ch = 0; ch < nCh; ++ch) {
                 float* x = sat_proc_buf.getWritePointer(ch);
-                for (int i = 0; i < nS; ++i) x[i] *= pre_gain;
+                for (int i = 0; i < nSamp; ++i) x[i] *= pre_gain;
             }
         }
 
-        auto block = juce::dsp::AudioBlock<float>(sat_proc_buf);
+        auto block = juce::dsp::AudioBlock<float>(sat_proc_buf).getSubBlock(0, (size_t)nSamp);
         auto osBlock = os->processSamplesUp(block);
+
         const int mode = p_sat_mode;
         const double drive = (double)sat_drive_lin_sm;
         const int osN = (int)osBlock.getNumSamples();
@@ -1410,7 +1445,7 @@ private:
         if (p_active_sat && p_sat_mirror) {
             for (int ch = 0; ch < nCh; ++ch) {
                 float* y = sat_proc_buf.getWritePointer(ch);
-                for (int i = 0; i < nS; ++i) y[i] *= (float)mirror_comp;
+                for (int i = 0; i < nSamp; ++i) y[i] *= (float)mirror_comp;
             }
         }
 
@@ -1427,7 +1462,7 @@ private:
             auto& gBump = (ch == 0) ? girth_bump_l : girth_bump_r;
             auto& gDip = (ch == 0) ? girth_dip_l : girth_dip_r;
 
-            for (int i = 0; i < nS; ++i)
+            for (int i = 0; i < nSamp; ++i)
             {
                 double s = (double)y[i];
 
@@ -1446,14 +1481,14 @@ private:
         }
 
         {
-            const double alpha = std::exp(-(double)nS / (0.300 * s_rate));
+            const double alpha = std::exp(-(double)nSamp / (0.300 * s_rate));
 
             if (sat_agc_active)
             {
                 double inPow = 0.0;
                 for (int ch = 0; ch < nCh; ++ch) {
                     const float* x = sat_clean_buf.getReadPointer(ch);
-                    for (int i = 0; i < nS; ++i) inPow += (double)x[i] * (double)x[i];
+                    for (int i = 0; i < nSamp; ++i) inPow += (double)x[i] * (double)x[i];
                 }
 
                 if (inPow > 1e-20 && outPow_post > 1e-20) {
@@ -1466,7 +1501,7 @@ private:
                     const float gSm = (float)sat_agc_gain_sm;
                     for (int ch = 0; ch < nCh; ++ch) {
                         float* y = sat_proc_buf.getWritePointer(ch);
-                        for (int i = 0; i < nS; ++i) y[i] *= gSm;
+                        for (int i = 0; i < nSamp; ++i) y[i] *= gSm;
                     }
                 }
             }
@@ -1483,7 +1518,7 @@ private:
         {
             for (int ch = 0; ch < nCh; ++ch) {
                 float* y = sat_proc_buf.getWritePointer(ch);
-                for (int i = 0; i < nS; ++i) y[i] *= (float)trim;
+                for (int i = 0; i < nSamp; ++i) y[i] *= (float)trim;
             }
         }
 
@@ -1496,7 +1531,7 @@ private:
                 float* finalOut = io.getWritePointer(ch);
                 const float* wet = sat_proc_buf.getReadPointer(ch);
                 const float* dry = sat_clean_buf.getReadPointer(ch);
-                for (int i = 0; i < nS; ++i) {
+                for (int i = 0; i < nSamp; ++i) {
                     finalOut[i] = dry[i] + (wet[i] - dry[i]) * satMix01;
                 }
             }
@@ -1515,7 +1550,6 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> mojo_os;
     int mojo_os_stages = 0;
     int mojo_os_factor = 1;
-    std::vector<float> mojo_drive_buf;
 
     int os_stages = 2;
     int os_factor = 4;
@@ -1571,7 +1605,6 @@ private:
     double sat_agc_gain_sm = 1.0;
     double comp_agc_gain_sm = 1.0;
     double global_in_sm = 1.0, global_in_target = 1.0;
-    double global_out_sm = 1.0, global_out_target = 1.0;
 
     double thrust_gain_db = 0.0;
 
@@ -1629,6 +1662,17 @@ private:
 
     double mojo_dc_x1_l = 0.0, mojo_dc_y1_l = 0.0;
     double mojo_dc_x1_r = 0.0, mojo_dc_y1_r = 0.0;
+
+    float c_att_ms = -1.f, c_rel_ms = -1.f;
+    bool c_turbo_att = false, c_turbo_rel = false;
+    float c_det_rms = -1.f;
+    float c_sc_hp_freq = -1.f, c_sc_lp_freq = -1.f;
+    int c_thrust_mode = -1;
+    float c_crest_speed = -1.f;
+    float c_sat_tone = -100.f, c_sat_tone_freq = -1.f;
+    float c_girth = -100.f; int c_girth_freq_sel = -1;
+    float c_harm_bright = -100.f, c_harm_freq = -1.f;
+    double c_s_rate = -1.0;
 
     juce::AudioBuffer<float> dry_buf, wet_buf, sc_internal_buf, mojo_buf;
     juce::AudioBuffer<float> sat_clean_buf, sat_proc_buf;
