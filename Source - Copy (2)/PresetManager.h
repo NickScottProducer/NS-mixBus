@@ -11,16 +11,19 @@
 class PresetManager
 {
 public:
+    // FIXED: Added 'inline' to prevent multiple definition linker errors
     inline static const juce::String PRESET_EXTENSION = ".xml";
 
     PresetManager(juce::AudioProcessorValueTreeState& apvts) : valueTreeState(apvts)
     {
+        // Windows: %APPDATA%\NS_bussStuff
+        // Mac: ~/Library/Application Support/NS_bussStuff
         juce::File root = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory);
 
 #if JUCE_MAC
-        root = root.getChildFile("Audio").getChildFile("Presets").getChildFile("NS_BusComp");
+        root = root.getChildFile("Audio").getChildFile("Presets").getChildFile("NS_bussStuff");
 #else
-        root = root.getChildFile("NS_BusComp");
+        root = root.getChildFile("NS_bussStuff");
 #endif
 
         if (!root.exists())
@@ -33,10 +36,6 @@ public:
     {
         const auto xml = valueTreeState.copyState().createXml();
         const auto file = defaultDirectory.getChildFile(presetName + PRESET_EXTENSION);
-
-        // FIX: Create parent directory explicitly for nested preset saves
-        file.getParentDirectory().createDirectory();
-
         if (!xml->writeTo(file))
         {
             DBG("Could not write preset to file: " + file.getFullPathName());
@@ -73,7 +72,7 @@ public:
     }
 
     // Returns a list of all presets (names only, no extension)
-    juce::StringArray refreshAndGetAllPresets()
+    juce::StringArray getAllPresets()
     {
         allPresets.clear();
 
@@ -82,6 +81,7 @@ public:
 
         for (const auto& file : results)
         {
+            // Store relative path so "Bass/Smash" shows up as such
             auto relativePath = file.getRelativePathFrom(defaultDirectory);
             relativePath = relativePath.dropLastCharacters(PRESET_EXTENSION.length());
             allPresets.add(relativePath);

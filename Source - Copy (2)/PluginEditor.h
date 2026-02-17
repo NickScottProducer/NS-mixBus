@@ -8,7 +8,7 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
-#include "PresetPanel.h"
+#include "PresetPanel.h" // ADDED
 
 class UltimateCompAudioProcessorEditor final : public juce::AudioProcessorEditor,
     private juce::Timer
@@ -29,18 +29,10 @@ private:
     // Logo Image
     juce::Image pluginLogo;
 
-    // Tooltip Helper
+    // Tooltip Helper - Changed to unique_ptr for complete destruction
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
-    // Forward Declarations
-    class UltimateLNF;
-    class Panel;
-    class Knob;
-
-    // FIX: LookAndFeel MUST be declared before UI components so it is destroyed last
-    std::unique_ptr<UltimateLNF> lnf;
-
-    // Preset Panel & Button
+    // ADDED: Preset Panel & Button
     std::unique_ptr<PresetPanel> presetPanel;
     juce::TextButton bPresets;
     juce::TextButton bMojo;
@@ -48,6 +40,12 @@ private:
     // Mirroring State Tracking
     float lastCompInputVal = 0.0f;
     bool ignoreCallbacks = false; // Prevents recursive loops
+
+    class UltimateLNF;
+    class Panel;
+    class Knob;
+
+    std::unique_ptr<UltimateLNF> lnf;
 
     // Panels
     std::unique_ptr<Panel> panelDyn;
@@ -71,9 +69,10 @@ private:
     std::unique_ptr<Knob> kGirth, kGirthFreq;
     std::unique_ptr<Knob> kTone, kToneFreq, kBright, kBrightFreq;
 
+
     juce::ComboBox cAutoRel, cThrust, cCtrlMode, cTpMode, cFluxMode, cSatMode, cSatAutoGain, cSignalFlow;
 
-    // Compressor Auto-Gain
+    // NEW: Compressor Auto-Gain
     juce::ComboBox cCompAutoGain;
 
     // SIDECHAIN COMBOS
@@ -112,9 +111,12 @@ private:
     std::unique_ptr<ComboBoxAttachment> cScModeAtt;
 
     std::unique_ptr<ComboBoxAttachment> aAutoRel, aThrust, aCtrlMode, aTpMode, aFluxMode, aSatMode, aSatAutoGain, aSignalFlow;
+
+    // NEW: Attachment
     std::unique_ptr<ComboBoxAttachment> aCompAutoGain;
 
     std::unique_ptr<ButtonAttachment> aTurboAtt, aTurboRel, aMirror, aCompMirror;
+
     std::unique_ptr<ButtonAttachment> aScToComp;
 
     std::unique_ptr<ButtonAttachment> aActiveDyn, aActiveDet, aActiveCrest, aActiveTpFlux, aActiveEq, aActiveSat;

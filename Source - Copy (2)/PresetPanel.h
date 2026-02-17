@@ -17,15 +17,6 @@ public:
     PresetPanel(PresetManager& pm, juce::LookAndFeel& lnf)
         : manager(pm), customLnf(lnf)
     {
-        // FIX: Ensure children components apply the custom look and feel
-        searchBar.setLookAndFeel(&customLnf);
-        presetList.setLookAndFeel(&customLnf);
-        nameEditor.setLookAndFeel(&customLnf);
-        loadBtn.setLookAndFeel(&customLnf);
-        saveBtn.setLookAndFeel(&customLnf);
-        deleteBtn.setLookAndFeel(&customLnf);
-        cancelBtn.setLookAndFeel(&customLnf);
-
         // --- Search Bar ---
         searchBar.addListener(this);
         searchBar.setTextToShowWhenEmpty("Search Presets...", juce::Colours::grey);
@@ -63,33 +54,31 @@ public:
         loadData();
     }
 
-    ~PresetPanel() override
-    {
-        searchBar.setLookAndFeel(nullptr);
-        presetList.setLookAndFeel(nullptr);
-        nameEditor.setLookAndFeel(nullptr);
-        loadBtn.setLookAndFeel(nullptr);
-        saveBtn.setLookAndFeel(nullptr);
-        deleteBtn.setLookAndFeel(nullptr);
-        cancelBtn.setLookAndFeel(nullptr);
-    }
+    ~PresetPanel() override {}
 
     void paint(juce::Graphics& g) override
     {
+        // --- 1. Background Gradient (Matches Main Plugin) ---
+        // Hex codes copied from your UltimateLNF palette
         juce::Colour bgA(0xff0a0910);
         juce::Colour bgB(0xff14121d);
 
+        // We make it fully opaque (or very slight transparency) so it covers the knobs below clearly
         g.setGradientFill(juce::ColourGradient(bgA, 0, 0, bgB, 0, (float)getHeight(), false));
         g.fillAll();
 
+        // --- 2. Blueprint Grid ---
         g.setColour(juce::Colour(0xff2a2438).withAlpha(0.30f)); // Grid line color
 
+        // Draw vertical lines
         for (int x = 0; x < getWidth(); x += 20)
             g.drawVerticalLine(x, 0.0f, (float)getHeight());
 
+        // Draw horizontal lines
         for (int y = 0; y < getHeight(); y += 20)
             g.drawHorizontalLine(y, 0.0f, (float)getWidth());
 
+        // --- 3. Border & Title ---
         g.setColour(juce::Colour(0xff382e4d)); // Edge color
         g.drawRect(getLocalBounds(), 1);
 
@@ -102,19 +91,24 @@ public:
     {
         auto r = getLocalBounds().reduced(20);
 
+        // Header
         auto header = r.removeFromTop(30);
         cancelBtn.setBounds(header.removeFromRight(30));
 
         r.removeFromTop(10);
+
+        // Search
         searchBar.setBounds(r.removeFromTop(24));
         r.removeFromTop(10);
 
+        // Footer (Save/Load)
         auto footer = r.removeFromBottom(30);
         int btnW = 80;
         loadBtn.setBounds(footer.removeFromRight(btnW));
         footer.removeFromRight(10);
         deleteBtn.setBounds(footer.removeFromLeft(btnW));
 
+        // Save Row (Above Footer)
         r.removeFromBottom(10);
         auto saveRow = r.removeFromBottom(24);
         saveBtn.setBounds(saveRow.removeFromRight(btnW));
@@ -122,17 +116,20 @@ public:
         nameEditor.setBounds(saveRow);
 
         r.removeFromBottom(10);
+
+        // List
         presetList.setBounds(r);
     }
 
+    // --- ListBoxModel Methods ---
     int getNumRows() override { return filteredPresets.size(); }
 
     void paintListBoxItem(int row, juce::Graphics& g, int width, int height, bool rowIsSelected) override
     {
         if (rowIsSelected)
-            g.fillAll(juce::Colour(0xffbd00ff).withAlpha(0.2f));
+            g.fillAll(juce::Colour(0xffbd00ff).withAlpha(0.2f)); // Accent color
 
-        g.setColour(juce::Colour(0xffe6e1ff));
+        g.setColour(juce::Colour(0xffe6e1ff)); // Text color
         g.setFont(14.0f);
         g.drawText(filteredPresets[row], 5, 0, width - 10, height, juce::Justification::centredLeft);
     }
@@ -148,6 +145,7 @@ public:
         loadPreset();
     }
 
+    // --- TextEditor Listener ---
     void textEditorTextChanged(juce::TextEditor& editor) override
     {
         if (&editor == &searchBar)
@@ -179,7 +177,7 @@ private:
 
     void loadData()
     {
-        allPresets = manager.refreshAndGetAllPresets();
+        allPresets = manager.getAllPresets();
         filterList(searchBar.getText());
     }
 
@@ -206,6 +204,8 @@ private:
         if (row >= 0 && row < filteredPresets.size())
         {
             manager.loadPreset(filteredPresets[row]);
+            // Optional: Close on load
+            // setVisible(false); 
         }
     }
 

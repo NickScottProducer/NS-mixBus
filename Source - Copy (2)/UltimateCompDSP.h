@@ -53,6 +53,7 @@ public:
     // --- SIDECHAIN EXPERT ---
     int  p_sc_input_mode = 0; // 0 = Internal, 1 = External
     bool p_sc_to_comp = true;
+    // REMOVED: p_sc_to_sat
     int  p_ms_mode = 0;
     float p_ms_balance_db = 0.0f; // NEW: M/S balance for cross modes
 
@@ -67,6 +68,7 @@ public:
     float p_rel_ms = 100.0f;
     int   p_auto_rel = 0;
 
+    // NEW: Compressor Auto-Gain
     int   p_comp_autogain_mode = 0; // 0=Off, 1=Partial, 2=Full
 
     bool  p_turbo_att = false;
@@ -119,6 +121,11 @@ public:
     float p_girth = 0.0f;        // dB
     int   p_girth_freq_sel = 2;  // 0=20,1=30,2=60,3=100
 
+    // --- DEBUG TUNING KNOBS (Temporary) ---
+    float p_debug_boost_q = 0.5f;
+    float p_debug_dip_q = 0.5f;
+    float p_debug_ratio = 0.35f;
+
     // --- OUTPUT ---
     float p_makeup = 0.0f;
     float p_dry_wet = 100.0f;
@@ -131,8 +138,8 @@ public:
     float getFluxSaturation() const { return (float)flux_env; }
     float getCrestAmt() const { return (float)cf_amt; }
 
-    // Constant latency reporting
-    double getLatency() const { return (double)os_latency_samples; }
+    // Latency is only incurred when the Sat/EQ oversampled block is active.
+    double getLatency() const { return (p_active_sat ? (double)os_latency_samples : 0.0); }
 
     // ==============================================================================
     // LIFECYCLE
@@ -140,19 +147,26 @@ public:
 
     void prepare(double sampleRate, int maxBlockSamples)
     {
-        s_rate = (sampleRate > 1.0 ? sampleRate : 48000.0);
+        s_rate = (sampleRate > 1.0 ? sampleRate : 44100.0);
         max_block = std::max(1, maxBlockSamples);
 
+        // Prepare Oversampling (fixed 4x)
         os_stages = 2;
         os_factor = 1 << os_stages;
 
         dry_buf.setSize(2, max_block, false, false, true);
         wet_buf.setSize(2, max_block, false, false, true);
         sc_internal_buf.setSize(2, max_block, false, false, true);
+
+        // Work buffers are base-rate; Oversampling maintains its own internal up/down buffers.
         sat_clean_buf.setSize(2, max_block, false, false, true);
         sat_proc_buf.setSize(2, max_block, false, false, true);
+
+        // Mojo parallel buffer
         mojo_buf.setSize(2, max_block, false, false, true);
 
+        // Mojo internal oversampling intentionally disabled for parallel-phase coherence.
+        // Anti-aliasing for Stuff is handled by ADAA waveshaping (no OS latency mismatch in parallel sums).
         mojo_os_stages = 0;
         mojo_os_factor = 1;
         mojo_os.reset();
@@ -161,6 +175,11 @@ public:
             2, os_stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
         os->initProcessing((size_t)max_block);
 
+        os_dry = std::make_unique<juce::dsp::Oversampling<float>>(
+            2, os_stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
+        os_dry->initProcessing((size_t)max_block);
+
+        // Cache oversampling latency for host reporting
         os_latency_samples = (int)os->getLatencyInSamples();
 
         juce::dsp::ProcessSpec spec;
@@ -171,11 +190,7 @@ public:
         satInternalDelay.prepare(spec);
         satInternalDelay.reset();
 
-        dryDelayLine.prepare(spec);
-        wetDelayLine.prepare(spec);
-        dryDelayLine.reset();
-        wetDelayLine.reset();
-
+        // Pre-size RMS ring buffer (max 300 ms) so detector window changes never allocate on the audio thread.
         rms_window_max = juce::jmax(1, (int)std::ceil(0.300 * s_rate));
         rms_ring_l.assign((size_t)rms_window_max, 0.0);
         rms_ring_r.assign((size_t)rms_window_max, 0.0);
@@ -187,17 +202,20 @@ public:
         updateParameters();
     }
 
+    // Safe to call from the message thread (e.g., releaseResources) to clear DSP state.
     void reset() noexcept
     {
         if (os) os->reset();
+        if (os_dry) os_dry->reset();
+
         satInternalDelay.reset();
-        dryDelayLine.reset();
-        wetDelayLine.reset();
         resetState();
     }
 
+
     void resetState()
     {
+        // Filters
         sc_hp_l.reset(); sc_hp_r.reset(); sc_hp_l_2.reset(); sc_hp_r_2.reset();
         sc_lp_l.reset(); sc_lp_r.reset(); sc_lp_l_2.reset(); sc_lp_r_2.reset();
         sat_tone_l.reset(); sat_tone_r.reset();
@@ -206,6 +224,7 @@ public:
         iron_voicing_l.reset(); iron_voicing_r.reset();
         steel_low_l.reset(); steel_low_r.reset(); steel_high_l.reset(); steel_high_r.reset();
 
+        // MOJO (parallel 'magic sauce') filters/state
         mojo_hp_l.reset(); mojo_hp_r.reset();
         mojo_low_shelf_l.reset(); mojo_low_shelf_r.reset();
         mojo_dip_l.reset(); mojo_dip_r.reset();
@@ -222,9 +241,8 @@ public:
         mojo_dc_x1_r = mojo_dc_y1_r = 0.0;
 
         if (os) os->reset();
+        if (os_dry) os_dry->reset();
         satInternalDelay.reset();
-        dryDelayLine.reset();
-        wetDelayLine.reset();
 
         steel_phi_l = steel_phi_r = 0.0;
         steel_prev_x_l = steel_prev_x_r = 0.0;
@@ -232,6 +250,7 @@ public:
         sc_level_sm = 1.0;
         ms_bal_sm = 1.0;
 
+        // Global Gains
         global_in_sm = 1.0;
         global_out_sm = 1.0;
 
@@ -250,6 +269,7 @@ public:
         cf_peak_env = 0.0; cf_rms_sum = 0.0; cf_amt = 0.0; cf_ratio_mix = 0.0;
         flux_env = 0.0;
 
+        // Auto-Gain States
         comp_agc_gain_sm = 1.0;
         sat_agc_gain_sm = 1.0;
 
@@ -267,6 +287,7 @@ public:
         last_sat_mode = -1;
         last_ctrl_mode = -1;
 
+        // Topology-change click smoothing (start stable)
         topologyRamp = 1.0;
         topologyInc = 0.0;
         prevTopoSatEq = (p_active_sat || p_active_eq);
@@ -276,6 +297,7 @@ public:
         prevTopoScMode = p_sc_input_mode;
         prevTopoScToComp = p_sc_to_comp;
     }
+
 
     void armTopologyFade() noexcept
     {
@@ -304,12 +326,13 @@ public:
 
         if (!changed) return;
 
+        // Reset latency-matching paths and oversampling state; then fade the wet contribution back in.
         if (os) os->reset();
+        if (os_dry) os_dry->reset();
 
         satInternalDelay.reset();
-        dryDelayLine.reset();
-        wetDelayLine.reset();
 
+        // Reset detector-conditioning state on SC-related topology changes.
         if ((audition != prevTopoAudition) || (msMode != prevTopoMsMode) || (scMode != prevTopoScMode) || (scToComp != prevTopoScToComp))
             resetDetectorConditioningState();
 
@@ -330,8 +353,11 @@ public:
         const int totalSamples = buffer.getNumSamples();
         if (totalSamples <= 0) return;
 
+        // If the host ever delivers a larger-than-expected block, we process it in fixed-size chunks
+        // so we never need to resize/allocate on the audio thread.
         const int chunkSize = juce::jmax(1, max_block);
 
+        // Smooth transitions for topology-affecting changes (order, routing, oversampling path).
         handleTopologyChangeIfNeeded();
 
         int offset = 0;
@@ -339,104 +365,99 @@ public:
         {
             const int nSamp = juce::jmin(chunkSize, totalSamples - offset);
 
+            // Update coefficients and control values for this chunk.
             smooth_alpha_block = std::exp(-(double)nSamp / (0.020 * s_rate));
             updateParameters();
 
+            // Smooth Global Gains
             global_in_sm = smooth1p(global_in_sm, global_in_target, smooth_alpha_block);
             global_out_sm = smooth1p(global_out_sm, global_out_target, smooth_alpha_block);
             mojo_mix_sm = smooth1p(mojo_mix_sm, mojo_mix_target, smooth_alpha_block);
 
-            // RAW POINTER ITERATION FOR AUDIO THREAD SAFETY (NO setSize OR setSample)
+            // 1) Snapshot Input for Dry/Wet mix later (chunk)
+            // Apply Global Input Gain to the COPY source so it propagates to wet/dry/sc buffers
+            dry_buf.setSize(2, nSamp, false, false, true);
+            wet_buf.setSize(2, nSamp, false, false, true);
+            sc_internal_buf.setSize(2, nSamp, false, false, true);
+
             const float* inL = buffer.getReadPointer(0) + offset;
             const float* inR = (buffer.getNumChannels() > 1) ? (buffer.getReadPointer(1) + offset) : inL;
 
-            float* dL = dry_buf.getWritePointer(0);
-            float* dR = dry_buf.getWritePointer(1);
-            float* wL = wet_buf.getWritePointer(0);
-            float* wR = wet_buf.getWritePointer(1);
-
             const float gIn = (float)global_in_sm;
 
+            // Copy with Gain
             for (int i = 0; i < nSamp; ++i) {
                 float l = inL[i] * gIn;
                 float r = inR[i] * gIn;
-                dL[i] = l;
-                dR[i] = r;
-                wL[i] = l;
-                wR[i] = r;
+                dry_buf.setSample(0, i, l);
+                dry_buf.setSample(1, i, r);
+                wet_buf.setSample(0, i, l);
+                wet_buf.setSample(1, i, r);
             }
 
+            // 2) Prepare Sidechain Buffer (chunk)
             if (p_sc_input_mode == 1 && sidechainBuffer != nullptr && sidechainBuffer->getNumChannels() > 0)
             {
                 const float* scL = sidechainBuffer->getReadPointer(0) + offset;
                 const float* scR = (sidechainBuffer->getNumChannels() > 1) ? (sidechainBuffer->getReadPointer(1) + offset) : scL;
 
-                float* sciL = sc_internal_buf.getWritePointer(0);
-                float* sciR = sc_internal_buf.getWritePointer(1);
-
-                for (int i = 0; i < nSamp; ++i) {
-                    sciL[i] = scL[i];
-                    sciR[i] = scR[i];
-                }
+                sc_internal_buf.copyFrom(0, 0, scL, nSamp);
+                sc_internal_buf.copyFrom(1, 0, scR, nSamp);
             }
             else
             {
-                float* sciL = sc_internal_buf.getWritePointer(0);
-                float* sciR = sc_internal_buf.getWritePointer(1);
-                for (int i = 0; i < nSamp; ++i) {
-                    sciL[i] = dL[i];
-                    sciR[i] = dR[i];
-                }
+                sc_internal_buf.copyFrom(0, 0, dry_buf, 0, 0, nSamp);
+                sc_internal_buf.copyFrom(1, 0, dry_buf, 1, 0, nSamp);
             }
 
+            // 3) Processing Chain (on wet_buf)
             if (p_sc_audition)
             {
+                // Monitor the detector feed (post SC gain + HP/LP + Thrust + M/S selection),
+                // without applying compression/saturation.
                 processAuditionBlock(wet_buf);
 
+                // Preserve oversampling latency behavior so toggling audition does not change timing.
                 if (p_active_sat && os)
                 {
-                    auto subBlock = juce::dsp::AudioBlock<float>(wet_buf).getSubBlock(0, (size_t)nSamp);
-                    auto osBlock = os->processSamplesUp(subBlock);
+                    auto block = juce::dsp::AudioBlock<float>(wet_buf);
+                    auto osBlock = os->processSamplesUp(block);
                     (void)osBlock;
-                    os->processSamplesDown(subBlock);
+                    os->processSamplesDown(block);
                 }
             }
             else
             {
-                if (p_signal_flow == 1)
+                if (p_signal_flow == 1) // Sat > Comp
                 {
                     processSaturationBlock(wet_buf);
                     processCompressorBlock(wet_buf);
                 }
-                else
+                else // Comp > Sat
                 {
                     processCompressorBlock(wet_buf);
                     processSaturationBlock(wet_buf);
                 }
             }
 
-            // TRUE BIT-TRANSPARENT DELAY LINE (REPLACES os_dry)
-            if (os_latency_samples > 0)
+            // 4) Latency Compensation for DRY signal
+            // If Saturation/EQ block ran, the wet signal is delayed by OS.
+            // We must delay the dry signal to match.
+            if (p_active_sat && os && os_dry)
             {
-                auto dryBlock = juce::dsp::AudioBlock<float>(dry_buf).getSubBlock(0, (size_t)nSamp);
-                juce::dsp::ProcessContextReplacing<float> dryCtx(dryBlock);
-                dryDelayLine.setDelay((float)os_latency_samples);
-                dryDelayLine.process(dryCtx);
-
-                if (!(p_active_sat && os))
-                {
-                    auto wetBlock = juce::dsp::AudioBlock<float>(wet_buf).getSubBlock(0, (size_t)nSamp);
-                    juce::dsp::ProcessContextReplacing<float> wetCtx(wetBlock);
-                    wetDelayLine.setDelay((float)os_latency_samples);
-                    wetDelayLine.process(wetCtx);
-                }
+                auto block = juce::dsp::AudioBlock<float>(dry_buf);
+                auto osBlock = os_dry->processSamplesUp(block);
+                (void)osBlock;
+                os_dry->processSamplesDown(block);
             }
 
+            // 4.5) Process Mojo Parallel Chain (using the latency-compensated dry_buf)
             if (mojo_on_sm > 0.001)
             {
                 processMojoBlock(dry_buf, nSamp);
             }
 
+            // 5) Final Mixer (write into the output buffer segment)
             const double dw_target = p_sc_audition ? 1.0 : juce::jlimit(0.0, 1.0, (double)p_dry_wet / 100.0);
             drywet_sm = smooth1p(drywet_sm, dw_target, smooth_alpha_block);
 
@@ -450,8 +471,8 @@ public:
 
             const float* wetL = wet_buf.getReadPointer(0);
             const float* wetR = wet_buf.getReadPointer(1);
-            const float* dryLL = dry_buf.getReadPointer(0);
-            const float* dryRR = dry_buf.getReadPointer(1);
+            const float* dryL = dry_buf.getReadPointer(0);
+            const float* dryR = dry_buf.getReadPointer(1);
             const float* mojoL = mojo_buf.getReadPointer(0);
             const float* mojoR = mojo_buf.getReadPointer(1);
 
@@ -469,10 +490,11 @@ public:
                 const float wm = (float)(drywet_sm * topologyRamp);
                 const float dm = 1.0f - wm;
 
-                float sigL = (wetL[i] * wm + dryLL[i] * dm);
-                float sigR = (wetR[i] * wm + dryRR[i] * dm);
+                float sigL = (wetL[i] * wm + dryL[i] * dm);
+                float sigR = (wetR[i] * wm + dryR[i] * dm);
 
                 if (mojoMix > 0.0f) {
+                    // APPLY GAIN HERE instead of Balance
                     sigL += mojoL[i] * mojoMix * mojoGain;
                     sigR += mojoR[i] * mojoMix * mojoGain;
                 }
@@ -550,6 +572,7 @@ public:
         sc_level_target = dbToLin((double)p_sc_level_db);
         ms_bal_target = dbToLin((double)p_ms_balance_db);
 
+        // Sidechain transient designer
         sc_td_amt_target = juce::jlimit(-1.0, 1.0, (double)p_sc_td_amt / 100.0);
         sc_td_ms_target = juce::jlimit(0.0, 1.0, (double)p_sc_td_ms / 100.0);
         sc_td_fast_att = std::exp(-1000.0 / (1.0 * s_rate));
@@ -564,6 +587,7 @@ public:
         sat_tone_l.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
         sat_tone_r.update_shelf((double)p_sat_tone_freq, (double)p_sat_tone, 0.707, s_rate);
 
+        // --- PULTEC-STYLE LOW-END TRICK (TUNED) ---
         {
             const int idx = juce::jlimit(0, 3, p_girth_freq_sel);
             static const double freqs[4] = { 20.0, 30.0, 60.0, 100.0 };
@@ -596,19 +620,23 @@ public:
         steel_high_l.update_lpf(9000.0, 0.707, s_rate);
         steel_high_r.update_lpf(9000.0, 0.707, s_rate);
 
-        double mojoRate = s_rate;
+        // MOJO PARAMETERS (Fixed "Analog" Curve)
+        // FIXED: Use the correct effective rate depending on Mojo Oversampling status
+        double mojoRate = s_rate; // Parallel-safe: Stuff runs at base rate (ADAA handles anti-aliasing)
 
         mojo_hp_l.update_hpf(20.0, 0.707, mojoRate);
         mojo_hp_r.update_hpf(20.0, 0.707, mojoRate);
-        mojo_low_shelf_l.update_low_shelf(80.0, 2.0, 0.9, mojoRate);
+        mojo_low_shelf_l.update_low_shelf(80.0, 2.0, 0.9, mojoRate); // Thick
         mojo_low_shelf_r.update_low_shelf(80.0, 2.0, 0.9, mojoRate);
-        mojo_dip_l.update_peak(320.0, -1.5, 1.5, mojoRate);
+        mojo_dip_l.update_peak(320.0, -1.5, 1.5, mojoRate); // Mud cut
         mojo_dip_r.update_peak(320.0, -1.5, 1.5, mojoRate);
-        mojo_hi_shelf_l.update_shelf(8000.0, 1.5, 0.707, mojoRate);
+        mojo_hi_shelf_l.update_shelf(8000.0, 1.5, 0.707, mojoRate); // Air
         mojo_hi_shelf_r.update_shelf(8000.0, 1.5, 0.707, mojoRate);
+        // Mojo Output LP is post-downsample (always base rate)
         mojo_lp_l.update_lpf(18000.0, 0.707, s_rate);
         mojo_lp_r.update_lpf(18000.0, 0.707, s_rate);
 
+        // MOJO: reset its internal state on rising edge to avoid stale envelope/filter history
         if (p_mojo && !mojo_prev_on) {
             mojo_hp_l.reset(); mojo_hp_r.reset();
             mojo_low_shelf_l.reset(); mojo_low_shelf_r.reset();
@@ -676,6 +704,7 @@ private:
         double ratio = (fastEnv + eps) / (slowEnv + eps);
         ratio = juce::jlimit(0.25, 4.0, ratio);
 
+        // amt is -1..1, depth scales aggression (detector-only, so we can be reasonably assertive)
         const double depth = 2.0;
         double g = std::exp(std::log(ratio) * (amt * depth));
         g = juce::jlimit(0.25, 4.0, g);
@@ -703,6 +732,9 @@ private:
         s_r = midP - sideP;
     }
 
+    // Resets detector-conditioning states (sidechain biquads + TD envelopes).
+    // Called on topology-affecting changes (M/S mode, SC routing/source, audition) so we never
+    // carry "stuck" IIR/ENV state across radically different detector configurations.
     void resetDetectorConditioningState() noexcept
     {
         sc_hp_l.resetState();   sc_hp_r.resetState();
@@ -715,15 +747,21 @@ private:
         sc_td_fast_side = sc_td_slow_side = 0.0;
     }
 
+    // Process Mojo chain on dry_buf content and store in mojo_buf
+    // Process Mojo chain on dry_buf content and store in mojo_buf
     void processMojoBlock(juce::AudioBuffer<float>& sourceBuf, int nSamp)
     {
+        // Copy Dry Source -> Mojo working buffer
         mojo_buf.copyFrom(0, 0, sourceBuf, 0, 0, nSamp);
         mojo_buf.copyFrom(1, 0, sourceBuf, 1, 0, nSamp);
 
         float* xL = mojo_buf.getWritePointer(0);
         float* xR = mojo_buf.getWritePointer(1);
 
-        const double THRESH_DB = (double)mojo_thresh_sm;
+        // ------------------------------------------------------------------
+        // "Rear-bus" parallel mojo chain: pre-shape -> smash comp -> gnarl
+        // ------------------------------------------------------------------
+        const double THRESH_DB = (double)mojo_thresh_sm; // user-controlled
         const double THRESH_DB_DEFAULT = -38.0;
         const double RATIO = 20.0;
         const double ATTACK_MS = 1.5;
@@ -735,17 +773,23 @@ private:
 
         const double eps = 1e-12;
         const double underlayGain = dbToLin(UNDERLAY_DB);
+        // "Juice" behavior: lowering threshold drives the chain harder while trimming output.
+        // Only applies when THRESH_DB is LOWER than the default (more negative).
         const double extraJuiceDb = juce::jlimit(0.0, 24.0, THRESH_DB_DEFAULT - THRESH_DB);
-        const double mojoPreJuice = dbToLin(extraJuiceDb * 0.50);
+        const double mojoPreJuice  = dbToLin(extraJuiceDb * 0.50);
         const double mojoPostJuice = dbToLin(-extraJuiceDb * 0.50);
         const bool useMojoOS = (mojo_os && mojo_os_stages > 0 && mojo_os_factor > 1);
 
+        // Determine effective sample rate for envelopes
         const double effRate = useMojoOS ? (s_rate * (double)mojo_os_factor) : s_rate;
 
         const double atkAlpha = std::exp(-1.0 / ((ATTACK_MS * 0.001) * std::max(effRate, 1.0)));
         const double relAlpha = std::exp(-1.0 / ((RELEASE_MS * 0.001) * std::max(effRate, 1.0)));
         const double slowAlpha = std::exp(-1.0 / (0.050 * std::max(effRate, 1.0)));
 
+        // ------------------------------------------------------------------
+        // NO internal oversampling
+        // ------------------------------------------------------------------
         if (!useMojoOS)
         {
             for (int i = 0; i < nSamp; ++i)
@@ -753,18 +797,22 @@ private:
                 double sL = (double)xL[i] * mojoPreJuice;
                 double sR = (double)xR[i] * mojoPreJuice;
 
+                // Filters
                 sL = mojo_hp_l.process(sL); sR = mojo_hp_r.process(sR);
                 sL = mojo_low_shelf_l.process(sL); sR = mojo_low_shelf_r.process(sR);
                 sL = mojo_dip_l.process(sL); sR = mojo_dip_r.process(sR);
                 sL = mojo_hi_shelf_l.process(sL); sR = mojo_hi_shelf_r.process(sR);
 
+                // Detector
                 const double det = std::max(std::abs(sL), std::abs(sR));
                 mojo_scale_sm = smooth1p(mojo_scale_sm, det, slowAlpha);
                 const double trans = det / (mojo_scale_sm + eps);
 
+                // Envelope
                 const double a = (det > mojo_env) ? atkAlpha : relAlpha;
                 mojo_env = smooth1p(mojo_env, det, a);
 
+                // Gain Comp
                 const double envDb = linToDb(mojo_env + eps);
                 const double overDb = envDb - THRESH_DB;
                 double grDb = 0.0;
@@ -775,6 +823,7 @@ private:
                 const double gComp = dbToLin(-grDb);
                 sL *= gComp; sR *= gComp;
 
+                // Nonlinearity
                 const double drive = BASE_DRIVE * (1.0 + 0.35 * juce::jlimit(0.0, 2.0, trans - 1.0));
 
                 const double symL = std::tanh(sL * drive);
@@ -786,10 +835,12 @@ private:
                 sL = (1.0 - ASYM_MIX) * symL + ASYM_MIX * asymL;
                 sR = (1.0 - ASYM_MIX) * symR + ASYM_MIX * asymR;
 
+                // Post
                 sL = mojo_lp_l.process(sL); sR = mojo_lp_r.process(sR);
                 sL *= underlayGain; sR *= underlayGain;
                 sL *= mojoPostJuice; sR *= mojoPostJuice;
 
+                // DC Block
                 double yL = sL - mojo_dc_x1_l + 0.995 * mojo_dc_y1_l;
                 mojo_dc_x1_l = sL; mojo_dc_y1_l = yL;
                 double yR = sR - mojo_dc_x1_r + 0.995 * mojo_dc_y1_r;
@@ -800,6 +851,13 @@ private:
             return;
         }
 
+        // ------------------------------------------------------------------
+        // Internal oversampling path
+        // **FIXED**: Move the ENTIRE chain inside the upsampling loop
+        // to prevent aliasing from the Compressor stage.
+        // ------------------------------------------------------------------
+
+        // 1) Upsample the raw input buffer
         auto baseBlock = juce::dsp::AudioBlock<float>(mojo_buf).getSubBlock(0, (size_t)nSamp);
         auto osBlock = mojo_os->processSamplesUp(baseBlock);
 
@@ -807,23 +865,28 @@ private:
         float* dR = osBlock.getChannelPointer(1);
         const int osN = (int)osBlock.getNumSamples();
 
+        // 2) Run the entire Mojo logic at the High Sample Rate
         for (int j = 0; j < osN; ++j)
         {
             double sL = (double)dL[j] * mojoPreJuice;
             double sR = (double)dR[j] * mojoPreJuice;
 
+            // Filters (coeffs updated for os_rate in updateParameters)
             sL = mojo_hp_l.process(sL); sR = mojo_hp_r.process(sR);
             sL = mojo_low_shelf_l.process(sL); sR = mojo_low_shelf_r.process(sR);
             sL = mojo_dip_l.process(sL); sR = mojo_dip_r.process(sR);
             sL = mojo_hi_shelf_l.process(sL); sR = mojo_hi_shelf_r.process(sR);
 
+            // Detector
             const double det = std::max(std::abs(sL), std::abs(sR));
             mojo_scale_sm = smooth1p(mojo_scale_sm, det, slowAlpha);
             const double trans = det / (mojo_scale_sm + eps);
 
+            // Envelope (alphas calculated for os_rate)
             const double a = (det > mojo_env) ? atkAlpha : relAlpha;
             mojo_env = smooth1p(mojo_env, det, a);
 
+            // Gain Comp
             const double envDb = linToDb(mojo_env + eps);
             const double overDb = envDb - THRESH_DB;
             double grDb = 0.0;
@@ -834,6 +897,7 @@ private:
             const double gComp = dbToLin(-grDb);
             sL *= gComp; sR *= gComp;
 
+            // Nonlinearity
             const double drive = BASE_DRIVE * (1.0 + 0.35 * juce::jlimit(0.0, 2.0, trans - 1.0));
 
             const double symL = std::tanh(sL * drive);
@@ -850,8 +914,10 @@ private:
             dR[j] = (float)sR;
         }
 
+        // 3) Downsample
         mojo_os->processSamplesDown(baseBlock);
 
+        // 4) Post processing (LPF + DC Block at Base Rate)
         for (int i = 0; i < nSamp; ++i)
         {
             double sL = (double)xL[i];
@@ -878,6 +944,8 @@ private:
         float* sc_l = sc_internal_buf.getWritePointer(0);
         float* sc_r = sc_internal_buf.getWritePointer(1);
 
+        // TRUE BYPASS: If the Dynamics module is bypassed, do not touch the program signal.
+        // This guarantees null/bit-transparent behavior for "all modules bypassed" scenarios.
         if (!p_active_dyn)
         {
             det_env = 0.0; env = 0.0;
@@ -893,6 +961,7 @@ private:
         const double ratio_target = std::max(1.0, (double)p_ratio);
         const double knee_target = std::max(0.0, (double)p_knee);
 
+        // Auto-Gain Measurement Accumulators
         double sum_in_rms = 0.0;
         double sum_out_rms = 0.0;
 
@@ -908,15 +977,17 @@ private:
             sc_td_amt_sm = smooth1p(sc_td_amt_sm, sc_td_amt_target, smooth_alpha);
             sc_td_ms_sm = smooth1p(sc_td_ms_sm, sc_td_ms_target, smooth_alpha);
             ms_bal_sm = smooth1p(ms_bal_sm, ms_bal_target, smooth_alpha);
-
+            // 1. Apply Input Gain (Drive)
             double in_gain = comp_in_sm;
             l[i] *= (float)in_gain;
             r[i] *= (float)in_gain;
 
+            // RMS Input Measurement (Post-Input Gain, Pre-GR)
             if (p_comp_autogain_mode > 0) {
                 sum_in_rms += (double)l[i] * (double)l[i] + (double)r[i] * (double)r[i];
             }
 
+            // --- 2. SIDECHAIN CONDITIONING ---
             double s_l = (double)sc_l[i];
             double s_r = (double)sc_r[i];
 
@@ -945,9 +1016,12 @@ private:
                 }
             }
 
+            // Sidechain transient designer (post filters)
+            // Only meaningful when the sidechain is actually driving the detector and detector tools are enabled.
             if (p_sc_to_comp && p_active_det)
                 applySidechainTransientDesigner(s_l, s_r);
 
+            // --- 3. DETECTOR ---
             double det_in_l = s_l;
             double det_in_r = s_r;
 
@@ -959,15 +1033,17 @@ private:
                 else if (p_ms_mode == 3) { det_in_l = mid; det_in_r = mid; }
                 else if (p_ms_mode == 4) { det_in_l = side; det_in_r = side; }
             }
-
+            // FIXED: Feedback uses fb_prev stored BEFORE makeup gain
             det_in_l = det_in_l * (1.0 - fb_blend) + fb_prev_l * fb_blend;
             det_in_r = det_in_r * (1.0 - fb_blend) + fb_prev_r * fb_blend;
             runDetector(det_in_l, det_in_r);
 
+            // --- 4. APPLY GAIN REDUCTION ---
             const double lin_gain_l = std::pow(10.0, env_l / 20.0);
             const double lin_gain_r = std::pow(10.0, env_r / 20.0);
             const double lin_gain_mono = std::pow(10.0, env / 20.0);
 
+            // Apply GR first (Pre-Makeup)
             double pre_make_l = 0.0;
             double pre_make_r = 0.0;
 
@@ -986,45 +1062,58 @@ private:
                 else if (p_ms_mode == 3) side *= lin_gain_mono;
                 else if (p_ms_mode == 4) mid *= lin_gain_mono;
 
+                // NEW: M/S balance tilt for cross-modes (keeps energy roughly consistent)
                 if (p_ms_mode == 3) { mid *= (1.0 / ms_bal_sm); side *= ms_bal_sm; }
                 else if (p_ms_mode == 4) { mid *= ms_bal_sm; side *= (1.0 / ms_bal_sm); }
                 pre_make_l = mid + side;
                 pre_make_r = mid - side;
             }
 
+            // Store Feedback Tap (Pre-Makeup)
             fb_prev_l = pre_make_l;
             fb_prev_r = pre_make_r;
 
+            // RMS Output Measurement (Pre-Makeup)
             if (p_comp_autogain_mode > 0) {
                 sum_out_rms += pre_make_l * pre_make_l + pre_make_r * pre_make_r;
             }
 
+            // 5. Apply Makeup & Auto-Gain
             const double final_agc = (double)comp_agc_gain_sm;
             const double mirror = (p_comp_mirror) ? (1.0 / std::max(1e-6, comp_in_sm)) : 1.0;
             l[i] = (float)(pre_make_l * makeup_lin_sm * final_agc * mirror);
             r[i] = (float)(pre_make_r * makeup_lin_sm * final_agc * mirror);
         }
 
+        // --- COMPRESSOR AUTO-GAIN LOGIC (Block Level) ---
         if (p_comp_autogain_mode > 0 && sum_in_rms > 1e-12) {
             double rms_in = std::sqrt(sum_in_rms / (double)(nSamp * 2));
-            double rms_out = std::sqrt(sum_out_rms / (double)(nSamp * 2));
+            double rms_out = std::sqrt(sum_out_rms / (double)(nSamp * 2)); // This is Post-GR, Pre-Makeup
 
+            // Only update gain if signal is above noise floor (-60dB)
             if (rms_in > 0.001) {
                 double g_req = rms_in / (rms_out + 1e-24);
-                g_req = juce::jlimit(0.25, 4.0, g_req);
 
+                // Limit extreme corrections
+                g_req = juce::jlimit(0.25, 4.0, g_req); // +/- 12dB max
+
+                // Modes
                 double strength = (p_comp_autogain_mode == 1) ? 0.5 : 1.0;
                 double g_target = std::pow(g_req, strength);
 
+                // Slow smoothing for stability (300ms)
                 double agc_alpha = std::exp(-(double)nSamp / (0.300 * s_rate));
                 comp_agc_gain_sm = comp_agc_gain_sm * agc_alpha + g_target * (1.0 - agc_alpha);
             }
         }
         else if (p_comp_autogain_mode == 0) {
+            // Slowly release back to unity if disabled
             double agc_alpha = std::exp(-(double)nSamp / (0.100 * s_rate));
             comp_agc_gain_sm = comp_agc_gain_sm * agc_alpha + 1.0 * (1.0 - agc_alpha);
         }
     }
+
+
 
     void processAuditionBlock(juce::AudioBuffer<float>& buf)
     {
@@ -1034,14 +1123,20 @@ private:
 
         for (int i = 0; i < nSamp; ++i)
         {
+            // Maintain the same basic gain smoothing behavior as the main path
             comp_in_sm = smooth1p(comp_in_sm, comp_in_target, smooth_alpha);
             sc_level_sm = smooth1p(sc_level_sm, sc_level_target, smooth_alpha);
+
+            // --- ADD THESE TWO LINES ---
             sc_td_amt_sm = smooth1p(sc_td_amt_sm, sc_td_amt_target, smooth_alpha);
             sc_td_ms_sm = smooth1p(sc_td_ms_sm, sc_td_ms_target, smooth_alpha);
+            // ---------------------------
 
+            // Pull sidechain source (internal/external)
             double s_l = (double)sc_internal_buf.getSample(0, i);
             double s_r = (double)((sc_internal_buf.getNumChannels() > 1) ? sc_internal_buf.getSample(1, i) : sc_internal_buf.getSample(0, i));
 
+            // If "Key to Comp" is disabled, detector hears the program input
             if (!p_sc_to_comp)
             {
                 s_l = (double)l[i];
@@ -1049,9 +1144,11 @@ private:
             }
             else
             {
+                // Apply SC level trim
                 s_l *= sc_level_sm;
                 s_r *= sc_level_sm;
 
+                // Internal SC: respect input trim (so audition matches detector behavior)
                 if (p_sc_input_mode == 0)
                 {
                     s_l *= comp_in_sm;
@@ -1060,22 +1157,26 @@ private:
 
                 if (p_active_det)
                 {
+                    // HPF/LPF - FIXED: Changed scHP_L to sc_hp_l etc to match class members
                     s_l = sc_hp_l_2.process(sc_hp_l.process(s_l));
                     s_r = sc_hp_r_2.process(sc_hp_r.process(s_r));
                     s_l = sc_lp_l_2.process(sc_lp_l.process(s_l));
                     s_r = sc_lp_r_2.process(sc_lp_r.process(s_r));
 
+                    // Thrust voicing
                     if (p_thrust_mode != 0) {
                         s_l = sc_shelf_l.process(s_l);
                         s_r = sc_shelf_r.process(s_r);
                     }
                 }
 
+                // Sidechain transient designer (post filters)
                 if (p_active_det)
                     applySidechainTransientDesigner(s_l, s_r);
 
             }
 
+            // M/S detector selection (affects what you hear in audition)
             double det_in_l = s_l;
             double det_in_r = s_r;
 
@@ -1086,8 +1187,8 @@ private:
 
                 if (p_ms_mode == 1) { det_in_l = det_in_r = mid; }
                 else if (p_ms_mode == 2) { det_in_l = det_in_r = side; }
-                else if (p_ms_mode == 3) { det_in_l = det_in_r = mid; }
-                else if (p_ms_mode == 4) { det_in_l = det_in_r = side; }
+                else if (p_ms_mode == 3) { det_in_l = det_in_r = mid; }   // M>S: detect Mid
+                else if (p_ms_mode == 4) { det_in_l = det_in_r = side; }  // S>M: detect Side
             }
 
             l[i] = (float)det_in_l;
@@ -1095,8 +1196,10 @@ private:
         }
     }
 
+
     void runDetector(double s_l, double s_r)
     {
+        // Detector raw (pre-link)
         double det_l_raw = 0.0, det_r_raw = 0.0;
 
         if (use_rms) {
@@ -1121,6 +1224,8 @@ private:
 
         const double det_avg = std::sqrt(0.5 * (det_l_raw * det_l_raw + det_r_raw * det_r_raw));
         const double det_max = std::max(det_l_raw, det_r_raw);
+
+        // Global detector value for control-layer options (TP / Crest / Flux)
         const double det = det_max;
 
         double eff_thresh_db = thresh_sm;
@@ -1143,6 +1248,7 @@ private:
         double eff_ratio = ratio_sm;
         if (p_active_tf && p_ctrl_mode == 1)
         {
+            // Crest-factor thresh/ratio (optional)
             const double crest_coeff_local = crest_coeff;
             cf_peak_env = std::max(det_max, cf_peak_env * crest_coeff_local);
             const double rms_p = det_avg * det_avg;
@@ -1185,8 +1291,8 @@ private:
                     if (x <= -half) gr_db = 0.0;
                     else if (x >= half) gr_db = -(x - x / eff_ratio);
                     else {
-                        const double t = (x + half) / knee;
-                        const double y = t * t * (3.0 - 2.0 * t);
+                        const double t = (x + half) / knee; // 0..1
+                        const double y = t * t * (3.0 - 2.0 * t); // smoothstep
                         const double x2 = x - (-half);
                         const double gr_full = -(x2 - x2 / eff_ratio);
                         gr_db = gr_full * y;
@@ -1200,9 +1306,10 @@ private:
                 return gr_db;
             };
 
+        // --- Stereo link: 0% = dual-mono, 100% = fully linked.
         if (p_ms_mode == 0)
         {
-            const double link = stereo_link;
+            const double link = stereo_link; // 0..1
 
             const double det_db_l = linToDb(det_l_raw + 1e-20);
             const double det_db_r = linToDb(det_r_raw + 1e-20);
@@ -1215,6 +1322,7 @@ private:
             const double target_l = gr_l_un + (gr_link - gr_l_un) * link;
             const double target_r = gr_r_un + (gr_link - gr_r_un) * link;
 
+            // Smooth per channel (attack / release / auto-release)
             auto updateEnv = [&](double target, double& envC, double& fastC, double& slowC)
                 {
                     if (target < envC) {
@@ -1247,6 +1355,7 @@ private:
         }
         else
         {
+            // M/S modes are single-detector (by design), since you are explicitly compressing mid or side.
             const double det_db = linToDb(det + 1e-20);
             const double gr_db = compute_gr_db(det_db);
 
@@ -1281,8 +1390,15 @@ private:
         const int nCh = io.getNumChannels();
         const int nS = io.getNumSamples();
 
+        // ----------------------------------------------------------------------
+        // EQ-only path: when Saturation is bypassed but Color EQ is active,
+        // we process at the native sample rate (NO oversampling).
+        // This avoids the "phasey/top-end" delta residue caused by the OS up/down filters
+        // when the nonlinearity is not in use.
+        // ----------------------------------------------------------------------
         if (!p_active_sat && p_active_eq)
         {
+            // Snapshot DRY (for the section's Mix blend)
             sat_clean_buf.setSize(nCh, nS, false, false, true);
             sat_proc_buf.setSize(nCh, nS, false, false, true);
 
@@ -1311,9 +1427,11 @@ private:
                 }
             }
 
+            // Smooth mix to avoid zipper noise during automation.
             sat_mix_sm = smooth1p(sat_mix_sm, sat_mix_target, smooth_alpha_block);
             const float satMix01 = (float)juce::jlimit(0.0, 1.0, sat_mix_sm);
 
+            // Blend processed EQ against the dry snapshot (preserves existing behavior of Sat Mix).
             for (int ch = 0; ch < nCh; ++ch)
             {
                 float* out = io.getWritePointer(ch);
@@ -1329,10 +1447,12 @@ private:
 
         if (!os) return;
 
+        // 1. Snapshot DRY (Source for AutoGain)
         sat_clean_buf.setSize(nCh, nS, false, false, true);
         for (int ch = 0; ch < nCh; ++ch)
             sat_clean_buf.copyFrom(ch, 0, io, ch, 0, nS);
 
+        // Align Dry buffer with Oversampling latency
         if (p_active_sat) {
             float latency = os->getLatencyInSamples();
             satInternalDelay.setDelay(latency);
@@ -1356,6 +1476,9 @@ private:
             }
         }
 
+        // REMOVED: SC Filters for Sat (p_sc_to_sat functionality)
+
+        // --- OVERSAMPLED PROCESSING ---
         auto block = juce::dsp::AudioBlock<float>(sat_proc_buf);
         auto osBlock = os->processSamplesUp(block);
         const int mode = p_sat_mode;
@@ -1380,7 +1503,7 @@ private:
 
                 if (p_active_sat) {
                     s *= drive;
-                    if (mode == 1) {
+                    if (mode == 1) { // Iron
                         const double bias = 0.075;
                         const double y0 = std::tanh(bias);
                         const double y = std::tanh(s + bias) - y0;
@@ -1388,7 +1511,7 @@ private:
                         const double poly = s_sat - (s_sat * s_sat * s_sat) * 0.333333333333;
                         s = 0.82 * y + 0.18 * poly;
                     }
-                    else if (mode == 2) {
+                    else if (mode == 2) { // Steel
                         phi = phi * steel_leak_coeff + s * steel_dt;
                         const double y = std::tanh(phi * 7.0);
                         double dy = (y - yPrev) * steel_dy_gain;
@@ -1405,8 +1528,11 @@ private:
         }
         os->processSamplesDown(block);
 
+        // --- PREPARE FOR AUTOGAIN MEASUREMENT (APPLY MIRROR FIRST) ---
         const double mirror_comp = (p_sat_mirror) ? (1.0 / std::max(1e-6, (double)pre_gain)) : 1.0;
 
+        // We need to apply Mirror comp to the buffer BEFORE measuring Output power
+        // so that the AutoGain sees the 'final' level relative to input.
         if (p_active_sat && p_sat_mirror) {
             for (int ch = 0; ch < nCh; ++ch) {
                 float* y = sat_proc_buf.getWritePointer(ch);
@@ -1414,6 +1540,7 @@ private:
             }
         }
 
+        // --- POST-PROCESSING (Voicing + Color EQ; pre-trim) ---
         const bool sat_agc_active = (p_active_sat && (p_sat_autogain_mode != 0));
         double outPow_post = 0.0;
 
@@ -1431,11 +1558,13 @@ private:
             {
                 double s = (double)y[i];
 
+                // Transformer voicing
                 if (p_active_sat && (mode == 1 || mode == 2)) {
                     if (mode == 1) s = ironV.process(s);
                     else { s = stLo.process(s); s = stHi.process(s); }
                 }
 
+                // Color EQ
                 if (eq_girth_active) { s = gBump.process(s); s = gDip.process(s); }
                 if (eq_tone_active)  s = tone.process(s);
 
@@ -1445,11 +1574,13 @@ private:
             }
         }
 
+        // --- SATURATION AUTO-GAIN (Measured post-voicing/EQ, pre-trim) ---
         {
-            const double alpha = std::exp(-(double)nS / (0.300 * s_rate));
+            const double alpha = std::exp(-(double)nS / (0.300 * s_rate)); // ~300ms
 
             if (sat_agc_active)
             {
+                // Measure Clean (Delayed)
                 double inPow = 0.0;
                 for (int ch = 0; ch < nCh; ++ch) {
                     const float* x = sat_clean_buf.getReadPointer(ch);
@@ -1458,7 +1589,7 @@ private:
 
                 if (inPow > 1e-20 && outPow_post > 1e-20) {
                     double g = std::sqrt(inPow / outPow_post);
-                    g = juce::jlimit(0.125, 8.0, g);
+                    g = juce::jlimit(0.125, 8.0, g); // +/- 18dB limit
                     const double exponent = (p_sat_autogain_mode == 1) ? 0.5 : 1.0;
                     const double gTarget = std::pow(g, exponent);
                     sat_agc_gain_sm = sat_agc_gain_sm * alpha + gTarget * (1.0 - alpha);
@@ -1472,10 +1603,12 @@ private:
             }
             else
             {
+                // Release AGC if disabled
                 sat_agc_gain_sm = sat_agc_gain_sm * alpha + 1.0 * (1.0 - alpha);
             }
         }
 
+        // --- SAT TRIM (applied after AGC so Trim remains a real output control) ---
         sat_trim_lin_sm = smooth1p(sat_trim_lin_sm, sat_trim_lin, smooth_alpha_block);
         const double trim = (double)sat_trim_lin_sm;
 
@@ -1487,9 +1620,11 @@ private:
             }
         }
 
+        // Smooth mix to avoid zipper noise during automation.
         sat_mix_sm = smooth1p(sat_mix_sm, sat_mix_target, smooth_alpha_block);
         const float satMix01 = (float)juce::jlimit(0.0, 1.0, sat_mix_sm);
 
+        // Apply block back to io if either Saturation or EQ is active.
         if (p_active_sat || p_active_eq)
         {
             for (int ch = 0; ch < nCh; ++ch) {
@@ -1503,15 +1638,14 @@ private:
         }
     }
 
-    double s_rate = 48000.0;
+    double s_rate = 44100.0;
     int max_block = 512;
-    int os_latency_samples = 0;
+    int os_latency_samples = 0; // Oversampling latency (samples)
 
     std::unique_ptr<juce::dsp::Oversampling<float>> os;
+    std::unique_ptr<juce::dsp::Oversampling<float>> os_dry;
 
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> dryDelayLine{ 8192 };
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> wetDelayLine{ 8192 };
-
+    // Mojo/STUFF internal oversampling (automatic, under-the-hood)
     std::unique_ptr<juce::dsp::Oversampling<float>> mojo_os;
     int mojo_os_stages = 0;
     int mojo_os_factor = 1;
@@ -1523,8 +1657,10 @@ private:
 
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Thiran> satInternalDelay{ 8192 };
 
+    // Filters (Comp)
     SimpleBiquad sc_hp_l, sc_hp_r, sc_hp_l_2, sc_hp_r_2;
     SimpleBiquad sc_lp_l, sc_lp_r, sc_lp_l_2, sc_lp_r_2;
+
     SimpleBiquad sc_shelf_l, sc_shelf_r;
     SimpleBiquad sat_tone_l, sat_tone_r;
     SimpleBiquad girth_bump_l, girth_bump_r, girth_dip_l, girth_dip_r;
@@ -1568,6 +1704,7 @@ private:
     double steel_prev_x_l = 0.0, steel_prev_x_r = 0.0;
     double steel_dt = 0.0, steel_dy_gain = 1.0, steel_leak_coeff = 1.0;
 
+    // Gain States
     double sat_agc_gain_sm = 1.0;
     double comp_agc_gain_sm = 1.0;
     double global_in_sm = 1.0, global_in_target = 1.0;
@@ -1580,6 +1717,7 @@ private:
     double sc_level_target = 1.0, sc_level_sm = 1.0;
     double ms_bal_target = 1.0, ms_bal_sm = 1.0;
 
+    // Sidechain transient designer (detector conditioning)
     double sc_td_amt_target = 0.0, sc_td_amt_sm = 0.0;
     double sc_td_ms_target = 0.0, sc_td_ms_sm = 0.0;
 
@@ -1602,6 +1740,7 @@ private:
     int last_sat_mode = -1;
     int last_ctrl_mode = -1;
 
+    // Topology-change click smoothing (fade the "wet contribution" back in over a short ramp)
     double topologyRamp = 1.0;
     double topologyInc = 0.0;
 
@@ -1612,10 +1751,13 @@ private:
     int  prevTopoScMode = 0;
     bool prevTopoScToComp = false;
 
+    // ----------------------------------------------------------------------
+    // MOJO: Calibrated parallel "analog magic" (single-button)
+    // ----------------------------------------------------------------------
     double mojo_on_sm = 0.0;
     bool   mojo_prev_on = false;
     double mojo_scale_sm = 1.0;
-    double mojo_mix_sm = 0.5;
+    double mojo_mix_sm = 0.5; // Smooth variable blend
     double mojo_mix_target = 0.5;
     double mojo_env = 0.0;
     double mojo_level_sm = 1.0;
