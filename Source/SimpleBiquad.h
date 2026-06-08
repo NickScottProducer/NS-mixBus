@@ -38,7 +38,7 @@ struct SimpleBiquad {
     double x1 = 0.0, x2 = 0.0;
     double y1 = 0.0, y2 = 0.0;
 
-        void reset() {
+    void reset() {
         x1 = x2 = 0.0;
         y1 = y2 = 0.0;
         b0 = b1 = b2 = a1 = a2 = 0.0;
@@ -50,7 +50,7 @@ struct SimpleBiquad {
         y1 = y2 = 0.0;
     }
 
-        inline double process(double xn) {
+    inline double process(double xn) {
         // Direct Form I difference equation
         double yn = b0 * xn + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
 

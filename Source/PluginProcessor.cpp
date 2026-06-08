@@ -47,8 +47,7 @@ void UltimateCompAudioProcessor::prepareToPlay(double sampleRate, int samplesPer
     dsp.prepare(sampleRate, samplesPerBlock);
 
     // FIX: Set constant latency architecture once upon initialization
-    lastLatencySamples = (int)std::lround(dsp.getLatency());
-    setLatencySamples(lastLatencySamples);
+    setLatencySamples((int)std::lround(dsp.getLatency()));
 }
 
 void UltimateCompAudioProcessor::releaseResources() { dsp.reset(); }
@@ -74,9 +73,6 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     const bool hasSidechainBus = (getBusCount(true) > 1) && (getBus(true, 1) != nullptr) && getBus(true, 1)->isEnabled();
 
     // --- UPDATE PARAMETERS ---
-    dsp.p_global_in = *apvts.getRawParameterValue("in_gain");
-    dsp.p_out_trim = *apvts.getRawParameterValue("out_trim");
-
     dsp.p_thresh = *apvts.getRawParameterValue("thresh");
     dsp.p_ratio = *apvts.getRawParameterValue("ratio");
     dsp.p_knee = *apvts.getRawParameterValue("knee");
@@ -87,6 +83,7 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     dsp.p_comp_input = *apvts.getRawParameterValue("comp_input");
     dsp.p_comp_mirror = (*apvts.getRawParameterValue("comp_mirror") > 0.5f);
     dsp.p_dry_wet = *apvts.getRawParameterValue("dry_wet");
+    dsp.p_out_trim = *apvts.getRawParameterValue("out_trim");
     dsp.p_auto_rel = (int)*apvts.getRawParameterValue("auto_rel");
     dsp.p_signal_flow = (int)*apvts.getRawParameterValue("signal_flow");
     dsp.p_turbo_att = (*apvts.getRawParameterValue("turbo_att") > 0.5f);
@@ -139,10 +136,14 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     dsp.p_mojo = (*apvts.getRawParameterValue("stuff") > 0.5f);
     dsp.p_mojo_balance = *apvts.getRawParameterValue("stuff_bal");
     dsp.p_mojo_thresh_db = *apvts.getRawParameterValue("stuff_thresh");
-    dsp.p_mojo_mix = *apvts.getRawParameterValue("stuff_bal");
 
     dsp.p_girth = *apvts.getRawParameterValue("girth");
     dsp.p_girth_freq_sel = (int)*apvts.getRawParameterValue("girth_freq");
+
+    // FIX: Removed dynamic latency callbacks from the audio thread
+
+    // Input Gain mapping
+    dsp.p_global_in = *apvts.getRawParameterValue("in_gain");
 
     const int numSamples = buffer.getNumSamples();
     float inL = (buffer.getNumChannels() > 0) ? buffer.getMagnitude(0, 0, numSamples) : 0.0f;
@@ -161,9 +162,8 @@ void UltimateCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     float outL = (buffer.getNumChannels() > 0) ? buffer.getMagnitude(0, 0, numSamples) : 0.0f;
     float outR = (buffer.getNumChannels() > 1) ? buffer.getMagnitude(1, 0, numSamples) : outL;
 
-    // FIX: Standardized memory_order_relaxed across all channels
-    meterInL.store(inL, std::memory_order_relaxed); meterInR.store(inR, std::memory_order_relaxed);
-    meterOutL.store(outL, std::memory_order_relaxed); meterOutR.store(outR, std::memory_order_relaxed);
+    meterInL.store(inL, std::memory_order_relaxed); meterInR.store(inR);
+    meterOutL.store(outL, std::memory_order_relaxed); meterOutR.store(outR);
     meterGR.store(dsp.getGainReductiondB(), std::memory_order_relaxed);
     meterFlux.store(dsp.getFluxSaturation(), std::memory_order_relaxed);
     meterCrest.store(dsp.getCrestAmt(), std::memory_order_relaxed);
@@ -241,6 +241,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UltimateCompAudioProcessor::
     layout.add(std::make_unique<juce::AudioParameterFloat>("det_rms", "RMS Window", 0.0f, 300.0f, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("stereo_link", "Stereo Link %", 0.0f, 100.0f, 100.0f));
 
+    // FIX: Skew applied to frequency dials for accurate knob feel
     layout.add(std::make_unique<juce::AudioParameterFloat>("sc_hp_freq", "SC HPF", juce::NormalisableRange<float>(0.0f, 8000.0f, 1.0f, 0.3f), 20.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>("sc_lp_freq", "SC High Cut", juce::NormalisableRange<float>(40.0f, 20000.0f, 1.0f, 0.3f), 20000.0f));
 

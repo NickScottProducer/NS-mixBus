@@ -502,28 +502,6 @@ UltimateCompAudioProcessorEditor::UltimateCompAudioProcessorEditor(UltimateCompA
     bMojo.setTooltip("'stuff'\nAdds calibrated parallel analog push/grit/gnarl without changing the main compressor calibration.");
     addAndMakeVisible(bMojo);
 
-    // FIX: Ensure "STUFF" reliably writes the APVTS parameter even if the ButtonAttachment
-    // misses the click (TextButton toggle edge cases / custom LookAndFeel).
-    bMojo.onClick = [this]
-    {
-        if (auto* raw = audioProcessor.apvts.getRawParameterValue("stuff"))
-        {
-            const bool desired = bMojo.getToggleState();
-            const bool current = (raw->load() > 0.5f);
-
-            if (desired != current)
-            {
-                if (auto* p = audioProcessor.apvts.getParameter("stuff"))
-                {
-                    p->beginChangeGesture();
-                    p->setValueNotifyingHost(desired ? 1.0f : 0.0f);
-                    p->endChangeGesture();
-                }
-            }
-        }
-    };
-
-
     addAndMakeVisible(*kInGain);
     addAndMakeVisible(*kOutGain);
     addAndMakeVisible(*kStuffBal);
@@ -732,8 +710,6 @@ void UltimateCompAudioProcessorEditor::timerCallback()
 
     // STUFF Level knob appears only when STUFF is enabled
     const bool stuffOn = (*audioProcessor.apvts.getRawParameterValue("stuff") > 0.5f);
-    if (bMojo.getToggleState() != stuffOn)
-        bMojo.setToggleState(stuffOn, juce::dontSendNotification);
     if (kStuffBal && kStuffBal->isVisible() != stuffOn)
         kStuffBal->setVisible(stuffOn);
     if (kStuffThresh && kStuffThresh->isVisible() != stuffOn)
